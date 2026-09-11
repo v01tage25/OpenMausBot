@@ -453,7 +453,8 @@ export interface ConfigStatus {
   xai?: { configured: boolean };
   anthropic?: { configured: boolean };
   openaiCompat?: { configured: boolean; url?: string };
-  hermesServe?: { configured: boolean; url?: string };
+hermesServe?: { configured: boolean; url?: string };
+  vision?: { configured: boolean; url?: string };
   /** what this server is entitled to; Settings shows only what works here */
   edition?: { edition: "oss" | "enterprise"; features: string[] };
   /** a fleet agent exists on this server (Settings → Workspaces) */
