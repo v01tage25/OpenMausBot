@@ -672,6 +672,7 @@ export function SettingsModal() {
                   <HermesGatewayConnection />
                   <ApiKeyRow section="vision" />
                   <VisionUrl />
+                  <ApiKeyRow section="dictation" />
                   <ApiKeyRow section="xai" testProvider="xai" />
                   <div className="pt-2 text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">{t("keys.integrations.title")}</div>
                   <ApiKeyRow section="box" />

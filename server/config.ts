@@ -325,6 +325,9 @@ const appConfigSchema = z.object({
    * engine: "elevenlabs" (default; needs a key) or "system" (the Mac's
    * built-in voices, no key). */
   tts: z.object({ key: optionalText, voice: optionalText, provider: z.enum(["elevenlabs", "system"]).optional() }).optional(),
+  /** Composer dictation (hold Ctrl+Space): the Deepgram streaming key. The
+   * desktop shell, not a provider driver, consumes it. */
+  dictation: z.object({ key: optionalText }).optional(),
   /** Avatar provider credentials stay separate; choosing a router never reuses a cloud key. */
   imageGen: z.object({
     provider: z.enum(["openai", "xai", "custom"]).optional(),
@@ -394,6 +397,7 @@ export interface AppConfig {
   vps?: { sshAlias?: string };
   opencodeGo?: { apiKey?: string };
   tts?: { key?: string; voice?: string; provider?: "elevenlabs" | "system" };
+  dictation?: { key?: string };
   imageGen?: ImageGenerationConfig;
   profile?: { name?: string; email?: string };
   rooms?: { turnTimeoutMinutes: number };
@@ -559,6 +563,7 @@ export const FLEET_NEUTRAL_KEYS: ReadonlySet<string> = new Set([
   "profile",
   "language",
   "tts",
+  "dictation",
   "imageGen",
   "vps",
   "rooms",
@@ -663,6 +668,8 @@ cfg.hermesServe = { ...cfg.hermesServe };
   if (process.env.OPENCODE_API_KEY !== undefined) cfg.opencodeGo.apiKey = process.env.OPENCODE_API_KEY;
   cfg.tts = { ...cfg.tts };
   if (process.env.OMB_TTS_KEY !== undefined) cfg.tts.key = process.env.OMB_TTS_KEY;
+  cfg.dictation = { ...cfg.dictation };
+  if (process.env.OMB_DICTATION_KEY !== undefined) cfg.dictation.key = process.env.OMB_DICTATION_KEY;
   cfg.imageGen = { ...cfg.imageGen };
   if (process.env.OMB_OPENAI_IMAGE_KEY !== undefined) cfg.imageGen.key = process.env.OMB_OPENAI_IMAGE_KEY;
   if (process.env.OMB_CUSTOM_IMAGE_KEY !== undefined) cfg.imageGen.customApiKey = process.env.OMB_CUSTOM_IMAGE_KEY;
@@ -695,6 +702,7 @@ export function syncCredentialEnv(patch: Partial<AppConfig>): void {
     [patch.box?.token, "BOX_TOKEN"],
     [patch.opencodeGo?.apiKey, "OPENCODE_API_KEY"],
     [patch.tts?.key, "OMB_TTS_KEY"],
+    [patch.dictation?.key, "OMB_DICTATION_KEY"],
     [patch.imageGen?.key, "OMB_OPENAI_IMAGE_KEY"],
     [patch.imageGen?.customApiKey, "OMB_CUSTOM_IMAGE_KEY"],
   ];
@@ -737,6 +745,7 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "BOX_TOKEN",
   "OPENCODE_API_KEY",
   "OMB_TTS_KEY",
+  "OMB_DICTATION_KEY",
   "OMB_OPENAI_IMAGE_KEY",
   "OMB_CUSTOM_IMAGE_KEY",
   "COMPOSIO_API_KEY",
@@ -789,7 +798,7 @@ export function saveConfig(patch: Partial<AppConfig>, options: { replaceInstance
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-for (const key of ["xai", "anthropic", "openaiCompat", "hermesServe", "vision", "composio", "box", "opencodeGo", "tts", "imageGen", "profile", "rooms", "threads", "localVm", "features", "budgets", "billing", "onboarding"] as const) {
+for (const key of ["xai", "anthropic", "openaiCompat", "hermesServe", "vision", "composio", "box", "opencodeGo", "tts", "dictation", "imageGen", "profile", "rooms", "threads", "localVm", "features", "budgets", "billing", "onboarding"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);
