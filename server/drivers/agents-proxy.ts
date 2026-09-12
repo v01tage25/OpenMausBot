@@ -357,9 +357,25 @@ const ROUTINE_FIELDS_SCHEMA = {
 
 const TOOLS = [
   {
+    name: "list_room_targets",
+    description: "Discover actual OpenMausBot teammates in this room and other rooms within your allowed section. Returns exact bot and room IDs, their roles, and working folders, not other rooms' history. Use these bots, not native coding helpers with similar names, when the user asks their team to work together.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "coordinate_bots",
+    description: "Ask existing OpenMausBot teammates for advice or assign concrete work. Defaults to the current room; use group_id from list_room_targets for another room. Name 1-4 bot_ids: they receive this brief, use their own model and permissions, and reply in that room. Busy bots wait until available. Results return here and resume you automatically. Include exact file paths, constraints and what must be verified. No discussion is required before assigning. After sending all assignments, END your turn; do not poll or wait. On return, resolve tradeoffs, check the requested outcome and request concrete corrections if necessary before giving the user your final answer. Do not send acknowledgements as new work.",
+    inputSchema: { type: "object", additionalProperties: false, properties: {
+      group_id: { type: "string", description: "Optional destination room; omit for this room." },
+      bot_ids: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 4, uniqueItems: true },
+      message: { type: "string", minLength: 1, maxLength: 4000, description: "Self-contained question or task for these teammates. Send separate requests when responsibilities differ." },
+      request_key: { type: "string", description: "A short unique assignment key. Reuse for an identical retry." },
+      rework: { type: "boolean", description: "True only for concrete additional work from someone who already completed a request." },
+    }, required: ["bot_ids", "message", "request_key"] },
+  },
+  {
     name: "list_bots",
     description:
-      "List the other bots (agents) in your OpenMausBot section, with their model and whether they're busy. Call this before delegate_bot or ask_bot to discover who's available. Use delegate_bot for assignments; use ask_bot only for a short consultation needed inline.",
+      "List the other bots (agents) in your OpenMausBot section, with their model and what each is doing right now (available, working, waiting on the user, not responding, or unavailable). Call this before delegate_bot or ask_bot to discover who's available. Use delegate_bot for assignments; use ask_bot only for a short consultation needed inline.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -423,13 +439,13 @@ const TOOLS = [
   {
     name: "list_threads",
     description:
-      "See your own threads and the threads you opened on teammates, newest first: each with its bot, title, state (running, waiting on the person, queued, or idle), whether the person has unread there, and the delegation id if it was a handoff. Use it to check how the threads you started are going before reporting to the person; write a thread's title as #Title when you mention it. A teammate's other threads are never listed — only the ones you opened. This is a read: it starts nothing and changes nothing.",
+      "See your own threads and the threads you opened on teammates, newest first: each with its bot, title, state (running, waiting on the person, queued, idle, or closed), whether the person has unread there, and the delegation id if it was a handoff. Use it to check how the threads you started are going before reporting to the person; write a thread's title as #Title when you mention it. A teammate's other threads are never listed — only the ones you opened. This is a read: it starts nothing and changes nothing.",
     inputSchema: { type: "object", additionalProperties: false, properties: {} },
   },
   {
     name: "close_thread",
     description:
-      "Mark a thread you opened (or one of your own) as finished once you have read its result: it goes idle in the person's sidebar with a note saying you closed it. Nothing is deleted — deleting stays the person's decision — and a thread that is still running cannot be closed; wait for it or leave it. Use the thread id from list_threads or from the start_thread result. If a close is refused, do not retry it.",
+      "Mark a thread you opened (or one of your own) as finished once you have read its result: it leaves the person's default sidebar list (still under all threads, with a note saying you closed it) and list_threads reports it as closed. Nothing is deleted — deleting stays the person's decision — and a thread that is still running cannot be closed; wait for it or leave it. Use the thread id from list_threads or from the start_thread result. If a close is refused, do not retry it.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -735,9 +751,16 @@ const TOOLS = [
 });
 
 const SKILL_TOOL_NAMES = new Set(["skills_list", "skill_manage"]);
-const AVAILABLE_TOOLS = SKILL_AUTHORING_ENABLED
+const AUTHORING_TOOLS = SKILL_AUTHORING_ENABLED
   ? TOOLS
   : TOOLS.filter((tool) => !SKILL_TOOL_NAMES.has(tool.name));
+// One teamwork path in room turns; keep all unrelated integrations available.
+// Direct chats retain their existing peer/thread tools.
+const ROOM_ONLY_TOOLS = new Set(["list_room_targets", "coordinate_bots"]);
+const ROOM_REPLACED_TOOLS = new Set(["ask_bot", "delegate_bot", "check_delegation", "wait_delegation", "start_thread", "send_to_thread", "wait_thread"]);
+const AVAILABLE_TOOLS = process.env.OMB_ROOM_TURN === "1"
+  ? AUTHORING_TOOLS.filter(tool => !ROOM_REPLACED_TOOLS.has(tool.name))
+  : AUTHORING_TOOLS.filter(tool => !ROOM_ONLY_TOOLS.has(tool.name));
 
 type Json = Record<string, unknown>;
 type RoutineAction = "update" | "pause" | "resume" | "run_now" | "delete";
@@ -845,6 +868,17 @@ function recallSpeaker(hit: Json): string {
 }
 
 async function callTool(name: string, args: Json): Promise<{ text: string; isError?: boolean }> {
+  if (name === "list_room_targets") {
+    const r = await api("/api/internal/room-targets");
+    return { text: JSON.stringify(r), ...(r.error ? { isError: true } : {}) };
+  }
+  if (name === "coordinate_bots") {
+    const r = await api("/api/internal/coordinate-bots", { method: "POST", body: JSON.stringify({
+      groupId: args.group_id, botIds: args.bot_ids, message: args.message,
+      requestKey: args.request_key, rework: args.rework,
+    }) });
+    return { text: JSON.stringify(r), ...(r.error ? { isError: true } : {}) };
+  }
   if (name === "list_bots") {
     const r = await api(`/api/internal/agents?self=${encodeURIComponent(BOT_ID)}`);
     const bots = (r.bots as Array<Json>) ?? [];
@@ -852,7 +886,12 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const lines = bots.map((b) => {
       const role = b.title ? ` — ${b.title}` : "";
       const about = b.description ? ` (${String(b.description).slice(0, 120)})` : "";
-      return `- ${b.name}${role}${about} [id: ${b.id}, model: ${b.model}${b.busy ? ", busy" : ""}]`;
+      // statusText is the server's own wording for what the teammate is
+      // doing; an older server only sends busy, so fall back to that.
+      const state = typeof b.statusText === "string"
+        ? (b.status === "available" ? "" : b.statusText)
+        : (b.busy ? "busy" : "");
+      return `- ${b.name}${role}${about} [id: ${b.id}, model: ${b.model}${state ? `, ${state}` : ""}]`;
     });
     return {
       text: `Other bots in your section:\n${lines.join("\n")}\n\nAssign work with delegate_bot. Use ask_bot only for a short answer you need inline.`,
@@ -981,7 +1020,16 @@ async function callTool(name: string, args: Json): Promise<{ text: string; isErr
     const who = typeof r.toBotName === "string" && r.toBotName ? `@${r.toBotName}` : "the peer";
     if (r.status === "done") return { text: `${who} finished task ${taskId}:\n${String(r.result || "(no reply text)")}` };
     if (r.status === "queued") {
-      return { text: `Task ${taskId} is still queued — ${who} hasn't picked it up yet${waitMs ? ` after ${timeout}s` : ""}. Keep working and check again later.` };
+      const why = r.targetStatus === "waiting-on-user"
+        ? ` ${who} is waiting on the user, so it goes through after they answer.`
+        : r.targetStatus === "working" ? ` ${who} is busy with other work.` : "";
+      const expiresInMs = Number(r.expiresInMs);
+      const expiry = !Number.isFinite(expiresInMs)
+        ? ""
+        : expiresInMs <= 0
+          ? " It is past its 24-hour limit and will expire the next time it cannot be delivered."
+          : ` It expires if not picked up within ${Math.ceil(expiresInMs / 3_600_000)} hour${Math.ceil(expiresInMs / 3_600_000) === 1 ? "" : "s"}.`;
+      return { text: `Task ${taskId} is still queued — ${who} hasn't picked it up yet${waitMs ? ` after ${timeout}s` : ""}.${why}${expiry} Keep working and check again later.` };
     }
     if (r.status === "running") {
       const elapsedMs = Number.isFinite(r.elapsedMs) ? Number(r.elapsedMs) : 0;

@@ -862,6 +862,23 @@ describe("Store change stream", () => {
     expect(reloaded.taskByThread(bot.id, own.threadId)).not.toHaveProperty("openedBy");
   });
 
+  it("setTaskClosedBy stamps who closed a thread, survives a reload, and null reopens it", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const closer = store.createBot();
+    const task = store.createTask(bot.id, "Helper")!;
+    expect(task).not.toHaveProperty("closedBy");
+    expect(store.setTaskClosedBy(bot.id, task.threadId, { botId: closer.id, name: closer.name, at: 9 })!.closedBy)
+      .toEqual({ botId: closer.id, name: closer.name, at: 9 });
+    expect(store.setTaskClosedBy(bot.id, "no-such-thread", { botId: closer.id, name: closer.name, at: 9 })).toBeNull();
+    expect(new Store(selection).taskByThread(bot.id, task.threadId)?.closedBy).toEqual({ botId: closer.id, name: closer.name, at: 9 });
+    // the person picking the thread back up clears the stamp entirely
+    expect(store.setTaskClosedBy(bot.id, task.threadId, null)).not.toHaveProperty("closedBy");
+    expect(new Store(selection).taskByThread(bot.id, task.threadId)).not.toHaveProperty("closedBy");
+    // the HTTP task PATCH cannot forge or clear it
+    expect(store.patchTask(bot.id, task.threadId, { closedBy: { botId: closer.id, name: closer.name, at: 1 } } as never)).not.toHaveProperty("closedBy");
+  });
+
   it("every bot write emits a bot event carrying only the id (the wire shape is the caller's)", () => {
     const store = new Store(selection);
     const bot = store.createBot();

@@ -602,6 +602,8 @@
   "task.actions": "Actions for {title}",
   "task.waiting": "Waiting",
   "task.openedBy": "opened by {name}",
+  "task.closedBy": "closed by {name}",
+  "task.closed": "Closed",
   "thread.gone": "That thread is no longer here.",
   "thread.goneShowing": "That thread is no longer here. Showing {name} instead.",
   "task.unread": "Unread",
