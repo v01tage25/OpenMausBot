@@ -231,6 +231,81 @@ describe("HermesServeDriver (fake gateway)", () => {
     expect(outcome).toBe("unavailable");
   });
 
+  it("sends the reasoning effort as model_options.reasoning", async () => {
+    fake = installFakeGateway({ streamFrames: happyFrames });
+    await create();
+    await instance.adapter.sendTurn({ threadId: "t-effort", text: "think hard", effort: "high" });
+    await recorder.until((e) => e.type === "turn.completed");
+    const chat = fake?.calls.find((c) => c.url.includes("/chat/stream"));
+    expect((chat?.body as Record<string, unknown>).model_options).toEqual({
+      reasoning: { enabled: true, effort: "high" },
+    });
+
+    await instance.adapter.sendTurn({ threadId: "t-effort-off", text: "no thinking", effort: "none" });
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId !== (chat?.body as unknown));
+    const chat2 = fake?.calls.filter((c) => c.url.includes("/chat/stream")).at(-1);
+    expect((chat2?.body as Record<string, unknown>).model_options).toEqual({ reasoning: { enabled: false } });
+  });
+
+  it("declares the reasoning ladder the gateway accepts", async () => {
+    await create();
+    expect(instance.adapter.capabilities.effortLevels).toEqual(["none", "low", "medium", "high", "xhigh", "max"]);
+  });
+
+  it("builds the picker catalog from authenticated providers and splits provider:model on send", async () => {
+    const calls: Array<{ method: string; url: string; body?: unknown }> = [];
+    const previous = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input instanceof Request ? input.url : input);
+      const method = String(init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+      let body: unknown;
+      if (init?.body && typeof init.body === "string") {
+        try {
+          body = JSON.parse(init.body);
+        } catch {
+          body = init.body;
+        }
+      }
+      calls.push({ method, url, body });
+      if (url.endsWith("/health")) return json({ status: "ok" });
+      if (method === "GET" && url.includes("/api/model/options")) {
+        return json({
+          providers: [
+            { slug: "opencode-free", name: "OpenCode Free", authenticated: true, models: ["muse-spark-1.3-contributor-free", "deepseek-v4-flash-free"] },
+            { slug: "copilot", name: "Copilot", authenticated: true, models: ["gpt-5.4"] },
+            { slug: "openrouter", name: "OpenRouter", authenticated: false, models: ["should-not-appear"] },
+          ],
+        });
+      }
+      if (method === "POST" && url.endsWith("/api/sessions")) {
+        return json({ object: "hermes.session", session: { id: "sess-cat", source: "api_server" } });
+      }
+      if (method === "POST" && url.includes("/chat/stream")) {
+        return new Response(sse([["run.completed", { usage: { input_tokens: 1, output_tokens: 1 } }]]), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      return json({ error: `unexpected ${method} ${url}` }, 404);
+    }) as typeof fetch;
+    try {
+      await create();
+      await instance.refreshModels?.();
+      const ids = instance.models.options.map((o) => o.id);
+      expect(ids).toContain("opencode-free:muse-spark-1.3-contributor-free");
+      expect(ids).toContain("copilot:gpt-5.4");
+      expect(ids.some((id) => id.startsWith("openrouter:"))).toBe(false);
+
+      await instance.adapter.sendTurn({ threadId: "t-cat", text: "hi", model: "opencode-free:muse-spark-1.3-contributor-free" });
+      await recorder.until((e) => e.type === "turn.completed");
+      const chat = calls.find((c) => c.url.includes("/chat/stream"));
+      expect((chat?.body as Record<string, unknown>).provider).toBe("opencode-free");
+      expect((chat?.body as Record<string, unknown>).model).toBe("muse-spark-1.3-contributor-free");
+    } finally {
+      globalThis.fetch = previous;
+    }
+  });
+
   it("ends the turn with an error event when the stream fails mid-turn", async () => {
     fake = installFakeGateway({
       streamFrames: [

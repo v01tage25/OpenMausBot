@@ -30,10 +30,16 @@ import type {
   ThreadId,
   TurnId,
 } from "../contracts.ts";
-import { newEventId, newId } from "../contracts.ts";
+import { EFFORT_LEVELS, newEventId, newId } from "../contracts.ts";
 import { appendNative } from "./native.ts";
 
 const DRIVER_KIND = "hermesServe";
+
+/** The gateway's accepted reasoning ladder (api_server._REASONING_EFFORTS),
+ * intersected with OpenMausBot's own EFFORT_LEVELS. */
+const HERMES_EFFORT_LEVELS = EFFORT_LEVELS.filter((level) =>
+  ["none", "low", "medium", "high", "xhigh", "max"].includes(level),
+) as readonly EffortLevel[];
 
 const DEFAULT_MODELS: ModelCatalog = {
   default: "hermes-agent",
@@ -240,9 +246,31 @@ export const HermesServeDriver: ProviderDriver<HermesServeConfig> = {
       live.set(turn.threadId, { turnId, sessionId, runId: null, abort });
 
       const body: Record<string, unknown> = { message: turnMessage(turn) };
-      if (turn.model) body.model = turn.model;
-      else if (config.model) body.model = config.model;
-      if (config.provider) body.provider = config.provider;
+      // Model selection: a picker option may be a "provider:model" composite
+      // (catalogs from /api/model/options) or a bare model id on the
+      // configured provider. Effort rides model_options.reasoning — the
+      // gateway's ladder (none/low/medium/high/xhigh/max).
+      const model = turn.model ?? config.model;
+      if (model) {
+        const separator = model.indexOf(":");
+        const prefix = separator > 0 ? model.slice(0, separator) : null;
+        const bare = separator > 0 ? model.slice(separator + 1) : model;
+        if (prefix && (config.provider === prefix || catalogHasProvider(prefix))) {
+          body.provider = prefix;
+          body.model = bare;
+        } else {
+          body.model = model;
+          if (config.provider) body.provider = config.provider;
+        }
+      } else if (config.provider) {
+        body.provider = config.provider;
+      }
+      if (turn.effort) {
+        body.model_options =
+          turn.effort === "none"
+            ? { reasoning: { enabled: false } }
+            : { reasoning: { enabled: true, effort: turn.effort } };
+      }
 
       // The stream runs to completion inside sendTurn; the harness reads
       // progress through events, matching the boxagent/claude flow.
@@ -405,6 +433,7 @@ export const HermesServeDriver: ProviderDriver<HermesServeConfig> = {
       capabilities: {
         sessionModelSwitch: "in-session" as const,
         queueing: true,
+        effortLevels: HERMES_EFFORT_LEVELS,
       },
       sendTurn,
       interruptTurn: async (threadId: ThreadId) => {
@@ -467,28 +496,56 @@ export const HermesServeDriver: ProviderDriver<HermesServeConfig> = {
       }
     };
 
+    const modelsCatalog: ModelCatalog = { ...DEFAULT_MODELS, options: [...DEFAULT_MODELS.options] };
+
+    // The model picker lists what THIS gateway actually serves: every
+    // authenticated provider's models as "provider:model" composites, which
+    // sendTurn splits back into the chat body. Catalog built from
+    // /api/model/options (auth status included); a static fallback stays
+    // when the gateway is down or exposes nothing.
+    const catalogHasProvider = (provider: string) =>
+      modelsCatalog.options.some((option) => option.provider === provider);
+
     const refreshModels = async () => {
       try {
-        const listed = await api("/v1/models");
-        const data = Array.isArray(listed.data) ? listed.data : [];
-        const options = data
-          .map((m) => (typeof (m as Record<string, unknown>)?.id === "string" ? (m as Record<string, unknown>).id as string : null))
-          .filter((id): id is string => Boolean(id))
-          .slice(0, 50)
-          .map((id) => ({ id, label: id, custom: true }));
-        if (options.length > 0) modelsCatalog.options = options;
+        const listed = await api("/api/model/options");
+        const providers = Array.isArray(listed.providers) ? listed.providers : [];
+        const options: ModelCatalog["options"] = [];
+        for (const provider of providers) {
+          const p = provider as Record<string, unknown>;
+          if (p.authenticated !== true) continue;
+          const slug = typeof p.slug === "string" ? p.slug : null;
+          const name = typeof p.name === "string" ? p.name : slug;
+          if (!slug || slug === "moa") continue; // moa aggregates other providers
+          for (const model of Array.isArray(p.models) ? p.models : []) {
+            if (typeof model !== "string" || !model) continue;
+            options.push({ id: `${slug}:${model}`, label: `${model} · ${name}`, provider: slug });
+          }
+        }
+        if (options.length > 0) {
+          modelsCatalog.options = [...modelsCatalog.options.filter((o) => o.id === DEFAULT_MODELS.default), ...options];
+          if (!modelsCatalog.options.some((o) => o.id === modelsCatalog.default)) {
+            modelsCatalog.default = options[0]!.id;
+          }
+        }
       } catch {
         // A catalog refresh is advisory; the static default stays.
       }
     };
 
-    const modelsCatalog: ModelCatalog = { ...DEFAULT_MODELS, options: [...DEFAULT_MODELS.options] };
     if (config.model) {
       modelsCatalog.default = config.model;
       if (!modelsCatalog.options.some((o) => o.id === config.model)) {
-        modelsCatalog.options.unshift({ id: config.model, label: `${config.model} (configured)`, custom: true });
+        modelsCatalog.options.unshift({
+          id: config.model,
+          label: `${config.model}${config.provider ? ` · ${config.provider}` : " (configured)"}`,
+          custom: true,
+          provider: config.provider,
+        });
       }
     }
+    // Kick off the live catalog once; refreshModels stays available to the UI.
+    void refreshModels();
 
     return {
       instanceId,
