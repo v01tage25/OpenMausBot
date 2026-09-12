@@ -1959,5 +1959,11 @@
   "window.minimize": "Minimize",
   "window.maximize": "Maximize",
   "window.restore": "Restore",
-  "window.close": "Close"
+  "window.close": "Close",
+  "keys.hermesServe.label": "Hermes gateway API key",
+  "keys.hermesServe.placeholder": "gateway API_SERVER_KEY",
+  "keys.hermesServe.desc": "Connect a running Hermes agent gateway (local or on a VPS). Each bot gets its own Hermes memory profile — the agent learns and remembers per bot.",
+  "keys.hermesServe.link": "Hermes Agent on GitHub",
+  "keys.hermesServe.url": "Hermes gateway URL",
+  "keys.hermesServe.urlHint": "Elastic connection: http://127.0.0.1:8642 for a local gateway, or your VPS URL. Changing this moves every Hermes bot to the new gateway without any other setup."
 }

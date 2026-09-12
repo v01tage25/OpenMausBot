@@ -8,7 +8,7 @@ import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
 
-export type ConfigSection = "composio" | "box" | "opencodeGo" | "anthropic" | "openaiCompat" | "xai";
+export type ConfigSection = "composio" | "box" | "opencodeGo" | "anthropic" | "openaiCompat" | "hermesServe" | "xai";
 /** Sections whose key can be tried against the provider from the server. */
 export type TestableProvider = "anthropic" | "openaiCompat" | "xai";
 
@@ -24,6 +24,7 @@ const SECTIONS: Record<
   opencodeGo: { body: (v) => ({ opencodeGo: { apiKey: v } }), flag: (c) => c.opencodeGo?.configured ?? false },
   anthropic: { body: (v) => ({ anthropic: { key: v } }), flag: (c) => c.anthropic?.configured ?? false },
   openaiCompat: { body: (v) => ({ openaiCompat: { key: v } }), flag: (c) => c.openaiCompat?.configured ?? false },
+  hermesServe: { body: (v) => ({ hermesServe: { key: v } }), flag: (c) => c.hermesServe?.configured ?? false },
   xai: { body: (v) => ({ xai: { key: v } }), flag: (c) => c.xai?.configured ?? false },
 };
 
@@ -88,6 +89,14 @@ const CREDENTIALS: Record<
     descriptionKey: "keys.openaiCompat.desc",
     href: "https://openrouter.ai/keys",
     linkLabelKey: "keys.openaiCompat.link",
+    optional: true,
+  },
+  hermesServe: {
+    labelKey: "keys.hermesServe.label",
+    placeholderKey: "keys.hermesServe.placeholder",
+    descriptionKey: "keys.hermesServe.desc",
+    href: "https://github.com/NousResearch/hermes-agent",
+    linkLabelKey: "keys.hermesServe.link",
     optional: true,
   },
   xai: {
@@ -426,6 +435,55 @@ export function OpenAiCompatUrl() {
         </button>
       </div>
       <p className="mt-1 text-[11.5px] leading-relaxed text-ink-secondary">{t("keys.openaiCompat.urlHint")}</p>
+      {error && <div className="mt-1 text-[12px] text-danger">{error}</div>}
+    </div>
+  );
+}
+
+/** The Hermes gateway connection: base URL (elastic — loopback today, a VPS
+ * tomorrow) and the optional profile prefix that isolates a bot's memory. */
+export function HermesGatewayConnection() {
+  const { state, dispatch } = useStore();
+  const savedUrl = state.config?.hermesServe?.url ?? "";
+  const [url, setUrl] = useState(savedUrl);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { setUrl(savedUrl); }, [savedUrl]);
+  const dirty = url.trim() !== savedUrl;
+
+  const save = () => {
+    if (saving || !dirty) return;
+    setSaving(true);
+    setError(null);
+    api("/api/config", { method: "PUT", body: JSON.stringify({ hermesServe: { url: url.trim() } }) })
+      .then((status: ConfigStatus) => dispatch({ type: "configStatus", config: status }))
+      .catch((e) => setError(e.message))
+      .finally(() => setSaving(false));
+  };
+
+  return (
+    <div>
+      <div className="mb-1.5 text-[13px] text-ink-secondary">{t("keys.hermesServe.url")}</div>
+      <div className="flex gap-2">
+        <input
+          type="url"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && save()}
+          placeholder="http://127.0.0.1:8642"
+          aria-label={t("keys.hermesServe.url")}
+          spellCheck={false}
+          className="w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 font-mono text-[12px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
+        />
+        <button
+          onClick={save}
+          disabled={saving || !dirty}
+          className="flex w-[72px] shrink-0 items-center justify-center gap-1.5 rounded-lg bg-control py-2 text-[13px] text-ink hover:bg-raised-hover disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {saving ? <Loader2 size={13} className="animate-spin" /> : <><Check size={13} />{t("common.save")}</>}
+        </button>
+      </div>
+      <p className="mt-1 text-[11.5px] leading-relaxed text-ink-secondary">{t("keys.hermesServe.urlHint")}</p>
       {error && <div className="mt-1 text-[12px] text-danger">{error}</div>}
     </div>
   );

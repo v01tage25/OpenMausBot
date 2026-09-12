@@ -303,6 +303,12 @@ const appConfigSchema = z.object({
   openaiCompat: z
     .object({ key: optionalText, url: optionalText, model: optionalText, provider: optionalText })
     .optional(),
+  /** A running `hermes gateway`: url is the elastic connection point (loopback
+   * today, a VPS tomorrow); `profile` routes via /p/<profile>/ for per-bot
+   * memory. See docs/hermes-serve-protocol.md. */
+  hermesServe: z
+    .object({ key: optionalText, url: optionalText, profile: optionalText, model: optionalText, provider: optionalText })
+    .optional(),
   /** Project key used for Sessions, catalog and agent tools. userId/sessionId
    * are non-secret local identifiers used to reuse one Composio Session. */
   composio: z.object({ apiKey: optionalText, userId: optionalText, sessionId: optionalText }).optional(),
@@ -372,6 +378,10 @@ export interface AppConfig {
   budgets?: { monthlyUsd?: number; warnAtPercent?: number };
   billing?: { currency?: string; prices?: Record<string, { inputPerMillion: number; outputPerMillion: number; cachedInputPerMillion?: number }> };
   openaiCompat?: { key?: string; url?: string; model?: string; provider?: string };
+  /** A running `hermes gateway` (local or VPS): the driver is a pure HTTP
+   * client — no process ownership, no Hermes paths. `profile` isolates a
+   * bot's memory/skills via the gateway's /p/<profile>/ routing. */
+  hermesServe?: { key?: string; url?: string; profile?: string; model?: string; provider?: string };
   composio?: { apiKey?: string; userId?: string; sessionId?: string };
   box?: { token?: string };
   /** A named host from the user's SSH config. Authentication stays with SSH. */
@@ -632,6 +642,9 @@ export function loadConfig(): AppConfig {
   if (process.env.OPENAI_COMPAT_URL !== undefined) cfg.openaiCompat.url = process.env.OPENAI_COMPAT_URL;
   if (process.env.OPENAI_COMPAT_MODEL !== undefined) cfg.openaiCompat.model = process.env.OPENAI_COMPAT_MODEL;
   if (process.env.OPENAI_COMPAT_PROVIDER !== undefined) cfg.openaiCompat.provider = process.env.OPENAI_COMPAT_PROVIDER;
+  cfg.hermesServe = { ...cfg.hermesServe };
+  if (process.env.HERMES_URL !== undefined) cfg.hermesServe.url = process.env.HERMES_URL;
+  if (process.env.HERMES_API_SERVER_KEY !== undefined) cfg.hermesServe.key = process.env.HERMES_API_SERVER_KEY;
   cfg.composio = { ...cfg.composio };
   if (process.env.COMPOSIO_API_KEY !== undefined) cfg.composio.apiKey = process.env.COMPOSIO_API_KEY;
   cfg.box = { ...cfg.box };
@@ -666,6 +679,7 @@ export function syncCredentialEnv(patch: Partial<AppConfig>): void {
     [patch.xai?.key, "XAI_API_KEY"],
     [patch.anthropic?.key, "OMB_ANTHROPIC_API_KEY"],
     [patch.openaiCompat?.key, "OPENAI_COMPAT_API_KEY"],
+    [patch.hermesServe?.key, "HERMES_API_SERVER_KEY"],
     [patch.composio?.apiKey, "COMPOSIO_API_KEY"],
     [patch.box?.token, "BOX_TOKEN"],
     [patch.opencodeGo?.apiKey, "OPENCODE_API_KEY"],
@@ -682,6 +696,7 @@ export function syncCredentialEnv(patch: Partial<AppConfig>): void {
   // must follow the same set-when-truthy / delete-when-cleared rule as keys.
   const settings: Array<[value: string | undefined, name: string]> = [
     [patch.openaiCompat?.url, "OPENAI_COMPAT_URL"],
+    [patch.hermesServe?.url, "HERMES_URL"],
     [patch.anthropic?.url, "OMB_ANTHROPIC_API_URL"],
     [patch.openaiCompat?.model, "OPENAI_COMPAT_MODEL"],
     [patch.openaiCompat?.provider, "OPENAI_COMPAT_PROVIDER"],
@@ -759,7 +774,7 @@ export function saveConfig(patch: Partial<AppConfig>, options: { replaceInstance
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["xai", "anthropic", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "profile", "rooms", "threads", "localVm", "features", "budgets", "billing", "onboarding"] as const) {
+  for (const key of ["xai", "anthropic", "openaiCompat", "hermesServe", "composio", "box", "opencodeGo", "tts", "imageGen", "profile", "rooms", "threads", "localVm", "features", "budgets", "billing", "onboarding"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);
@@ -895,6 +910,10 @@ function injectedEnvironment(cfg: AppConfig, driver: string): Map<string, string
     environment.set("OPENAI_COMPAT_API_KEY", cfg.openaiCompat.key);
   if (driver === "openai-compat" && cfg.openaiCompat?.url)
     environment.set("OPENAI_COMPAT_URL", cfg.openaiCompat.url);
+  if (driver === "hermesServe" && cfg.hermesServe?.key)
+    environment.set("HERMES_API_SERVER_KEY", cfg.hermesServe.key);
+  if (driver === "hermesServe" && cfg.hermesServe?.url)
+    environment.set("HERMES_URL", cfg.hermesServe.url);
   if (driver === "boxAgent" && cfg.box?.token) environment.set("BOX_TOKEN", cfg.box.token);
   if (driver === "opencodeGo" && cfg.opencodeGo?.apiKey) environment.set("OPENCODE_API_KEY", cfg.opencodeGo.apiKey);
   return environment;
@@ -931,6 +950,7 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
     opencodeGo: { driver: "opencodeGo" },
     computer: { driver: "boxAgent" },
     openaiCompat: { driver: "openai-compat" },
+    hermesServe: { driver: "hermesServe" },
     qwen: { driver: "qwenAgent" },
     hermes: { driver: "hermesAgent" },
     pi: { driver: "piAgent" },
@@ -988,6 +1008,24 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
           // Empty routing explicitly means "no upstream pin" for isolated
           // API connections. Do not replace it with a workspace provider.
           if (k === "provider" && typeof merged[k] === "string") continue;
+          if (typeof merged[k] !== "string" || !(merged[k] as string).trim()) merged[k] = v;
+        }
+        entry.config = merged;
+      }
+    }
+    if (entry.driver === "hermesServe" && cfg.hermesServe) {
+      const defaults: Record<string, string> = {};
+      if (cfg.hermesServe.url) defaults.url = cfg.hermesServe.url;
+      if (cfg.hermesServe.profile) defaults.profile = cfg.hermesServe.profile;
+      if (cfg.hermesServe.model) defaults.model = cfg.hermesServe.model;
+      if (cfg.hermesServe.provider) defaults.provider = cfg.hermesServe.provider;
+      if (Object.keys(defaults).length) {
+        const raw = entry.config;
+        const current =
+          typeof raw === "object" && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+        const merged = { ...current };
+        // A per-instance value always wins over the workspace default.
+        for (const [k, v] of Object.entries(defaults)) {
           if (typeof merged[k] !== "string" || !(merged[k] as string).trim()) merged[k] = v;
         }
         entry.config = merged;
