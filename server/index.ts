@@ -11512,6 +11512,32 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     const teamFilter = url.searchParams.get("team");
     const wantsTeam = teamFilter !== null;
 
+    /** Whether the card's own thread is holding a prompt nobody has answered.
+     *
+     * A permission ask or a question is a message carrying a `requestId` that
+     * is still unanswered. That is the honest definition of "this bot is
+     * waiting on you", and it is read off the transcript the bot actually
+     * produced rather than inferred from `busy`: a bot can be busy working
+     * with nobody to answer, and it can be idle with a question outstanding.
+     * Cards without a thread of their own have nothing to be waiting on. */
+    const cardWaiting = (item: WorkItem): boolean => {
+      if (!item.ownerBotId || !item.threadId) return false;
+      try {
+        return store.messagesFor(item.threadId).some((message) => {
+          const card = message.card;
+          if (!card?.requestId) return false;
+          // An answered or dismissed ask is done waiting, whatever the
+          // transcript still shows. `answered` covers a verdict, `answeredText`
+          // the words a question was answered with.
+          return !card.answered && !card.answeredText && !card.dismissed;
+        });
+      } catch {
+        // A thread that cannot be read is not evidence of a waiting bot, so it
+        // must not paint a card as needing an answer.
+        return false;
+      }
+    };
+
     const boardPayload = () => {
       const items = workItems
         .list()
@@ -11523,6 +11549,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           const bot = item.ownerBotId ? store.bot(item.ownerBotId) : undefined;
           return {
             ...item,
+            /** The bot asked something and is stopped until it is answered. */
+            waiting: cardWaiting(item),
             // What the card shows about its agent, and what the Run button
             // needs to decide whether it can be pressed at all. `section` is
             // read through CARD_SECTION, not off the bot directly: a hidden

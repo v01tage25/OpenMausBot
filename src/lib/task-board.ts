@@ -43,6 +43,9 @@ export interface BoardCard {
   updatedAt: number;
   startedAt?: number;
   lastError?: string;
+  /** The server found an unanswered ask on this card's thread: the bot asked
+   * something and is stopped until a person answers it. */
+  waiting?: boolean;
   /** What the server reported about the card's owner, already reduced to the
    * team the card belongs to. Absent when the card has no owner. */
   agent?: BoardAgent | null;
@@ -130,6 +133,7 @@ export function placeIn(column: BoardCard[], beforeId: string | null): number {
  * stopped and said why is more informative than one that merely looks busy. */
 export function cardStatusLabel(card: BoardCard): string {
   if (card.lastError) return t("taskBoard.card.failed");
+  if (card.waiting) return t("taskBoard.card.waiting");
   if (card.agent?.busy) return t("taskBoard.card.working");
   switch (card.status) {
     case "backlog":
@@ -152,8 +156,29 @@ export function statusTone(card: BoardCard): "success" | "warning" | "danger" | 
   if (card.lastError || card.status === "blocked") return "danger";
   if (card.status === "done") return "success";
   if (card.status === "cancelled") return "idle";
+  // A question outranks "working": the work has stopped until it is answered,
+  // and a card that only looked busy would hide the thing being asked for.
+  if (card.waiting) return "warning";
   if (card.agent?.busy || card.status === "in_progress") return "accent";
   return "warning";
+}
+
+/** How a card is marked on the board, as one of a small set of states.
+ *
+ * These are the three things a person scanning the board needs to tell apart
+ * without opening anything: a bot that needs an answer, work in flight, and
+ * something that went wrong. Everything else is ordinary and gets no mark. */
+export type CardMark = "question" | "working" | "error" | "none";
+
+export function cardMark(card: BoardCard): CardMark {
+  // An error outranks a question: a card that stopped and said why is telling
+  // the person more than one that is merely waiting. `blocked` is not an error
+  // — it is a status the board already labels, and painting it red would make
+  // the red outline mean two different things.
+  if (card.lastError) return "error";
+  if (card.waiting) return "question";
+  if (card.agent?.busy) return "working";
+  return "none";
 }
 
 /** Whether Run can be pressed, and why not when it cannot.
