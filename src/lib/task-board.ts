@@ -115,6 +115,15 @@ export function dropPatch(
   return order === dragged.order ? null : { order };
 }
 
+/** Where a card arriving from ANOTHER column lands among the cards already
+ * there. `dropPatch` cannot answer this: it looks the dragged card up in the
+ * column, and a card that just crossed columns is not in it yet. */
+export function placeIn(column: BoardCard[], beforeId: string | null): number {
+  const at = beforeId === null ? column.length : column.findIndex((card) => card.id === beforeId);
+  const index = at === -1 ? column.length : at;
+  return orderBetween(index > 0 ? column[index - 1] : undefined, column[index]);
+}
+
 /** What a card is trying to say about the work right now, in one phrase.
  *
  * The order matters: a failure outranks a running agent, because a card that

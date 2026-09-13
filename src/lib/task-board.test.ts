@@ -16,6 +16,7 @@ import {
   elapsedLabel,
   filterByTeam,
   orderBetween,
+  placeIn,
   runAvailability,
   statusTone,
   stopAvailability,
@@ -219,6 +220,30 @@ describe("teamOptions", () => {
   it("sorts the named teams so the switcher does not reshuffle between loads", () => {
     const teams = teamOptions([owned("Zeta"), owned("Alpha"), owned("Beta")]);
     expect(teams.slice(1).map((team) => team.label)).toEqual(["Alpha", "Beta", "Zeta"]);
+  });
+});
+
+describe("placeIn", () => {
+  const a = card({ order: 0 });
+  const b = card({ order: 4 });
+  const c = card({ order: 8 });
+
+  it("places a card arriving from another column before its target", () => {
+    // A card that just crossed columns is not in the target column, so
+    // dropPatch cannot find it — this is the case it exists for.
+    expect(placeIn([a, b, c], b.id)).toBe(2);
+  });
+
+  it("places an arriving card last when dropped past the end", () => {
+    expect(placeIn([a, b, c], null)).toBe(9);
+  });
+
+  it("places an arriving card first in an empty column", () => {
+    expect(placeIn([], null)).toBe(0);
+  });
+
+  it("falls back to the end when the drop point vanished mid-drag", () => {
+    expect(placeIn([a, b, c], "gone")).toBe(9);
   });
 });
 

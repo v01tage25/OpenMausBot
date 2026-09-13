@@ -201,7 +201,12 @@ export function TaskBoardPage() {
     const moved = column.find((card) => card.id === cardId) ?? cards.find((card) => card.id === cardId);
     if (!moved) return;
 
-    const patch = dropPatch(column, cardId, beforeId);
+    // dropPatch reads the TARGET column, which does not contain a card that
+    // arrived from another column — so a cross-column drop computes its own
+    // place among the cards already there, and a reorder within one column
+    // uses dropPatch directly.
+    const patch = dropPatch(column, cardId, beforeId)
+      ?? (moved.status !== status ? { order: placeIn(column, beforeId) } : null);
     const crossed = moved.status !== status;
     if (!patch && !crossed) return;
 
