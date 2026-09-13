@@ -33,8 +33,12 @@ vi.mock("./VerifyCard", async (importOriginal) => {
     return createElement(original.VerifyCard, props);
   } };
 });
-vi.mock("./DesktopCapabilities", () => ({
+// The real useCaptionChrome rides along: it only asks this module for the
+// window chrome, and these tests render the desktop-neutral layout.
+vi.mock("./DesktopCapabilities", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./DesktopCapabilities")>(),
   useDesktopCapabilities: () => ({ capabilities: { dictation: { available: false } }, ready: true }),
+  useCaptionChrome: () => ({ windowsCaption: false, dragStyle: undefined, noDragStyle: undefined, controlsShiftStyle: undefined, padClass: undefined }),
 }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 // The thread controls read live model lists; they are not what this file tests.

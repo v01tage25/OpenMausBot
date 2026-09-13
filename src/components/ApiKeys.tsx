@@ -8,7 +8,7 @@ import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
 
-export type ConfigSection = "composio" | "box" | "opencodeGo" | "anthropic" | "openaiCompat" | "hermesServe" | "xai";
+export type ConfigSection = "composio" | "box" | "opencodeGo" | "anthropic" | "openaiCompat" | "hermesServe" | "xai" | "vision" | "dictation";
 /** Sections whose key can be tried against the provider from the server. */
 export type TestableProvider = "anthropic" | "openaiCompat" | "xai";
 
@@ -26,14 +26,18 @@ const SECTIONS: Record<
   openaiCompat: { body: (v) => ({ openaiCompat: { key: v } }), flag: (c) => c.openaiCompat?.configured ?? false },
   hermesServe: { body: (v) => ({ hermesServe: { key: v } }), flag: (c) => c.hermesServe?.configured ?? false },
   xai: { body: (v) => ({ xai: { key: v } }), flag: (c) => c.xai?.configured ?? false },
+  vision: { body: (v) => ({ vision: { key: v } }), flag: (c) => c.vision?.configured ?? false },
+  dictation: { body: (v) => ({ dictation: { key: v } }), flag: (c) => c.dictation?.configured ?? false },
 };
 
 // Provider keys have no desktop-shell slot yet and go through the server's
 // own 0600 config, the same place they live on a hosted server.
-const ELECTRON_CREDENTIAL: Partial<Record<ConfigSection, "composioApiKey" | "boxToken" | "opencodeGoApiKey">> = {
+const ELECTRON_CREDENTIAL: Partial<Record<ConfigSection, "composioApiKey" | "boxToken" | "opencodeGoApiKey" | "visionApiKey" | "dictationApiKey">> = {
   composio: "composioApiKey",
   box: "boxToken",
   opencodeGo: "opencodeGoApiKey",
+  vision: "visionApiKey",
+  dictation: "dictationApiKey",
 };
 
 const CREDENTIALS: Record<
@@ -105,6 +109,22 @@ const CREDENTIALS: Record<
     descriptionKey: "keys.xai.desc",
     href: "https://console.x.ai",
     linkLabelKey: "keys.xai.link",
+    optional: true,
+  },
+  vision: {
+    labelKey: "keys.vision.label",
+    placeholder: "flm-…",
+    descriptionKey: "keys.vision.desc",
+    href: "https://github.com/freellmapi/freellmapi",
+    linkLabelKey: "keys.vision.link",
+    optional: true,
+  },
+  dictation: {
+    labelKey: "keys.dictation.label",
+    placeholder: "dg-…",
+    descriptionKey: "keys.dictation.desc",
+    href: "https://console.deepgram.com",
+    linkLabelKey: "keys.dictation.link",
     optional: true,
   },
 };
@@ -200,24 +220,33 @@ export function ApiKeyRow({
   section: ConfigSection;
   /** Called after a successful save with the section's new configured flag. */
   onSaved?: (configured: boolean) => void;
-  /** Offer a Test button that tries the saved key against the provider. */
+  /** Offer a Test button for the saved key or a nonempty draft. */
   testProvider?: TestableProvider;
 }) {
   const { state, dispatch } = useStore();
   const [value, setValue] = useState("");
+  const [edited, setEdited] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [verdict, setVerdict] = useState<string | null>(null);
+  const testGeneration = useRef(0);
+
+  useEffect(() => {
+    testGeneration.current++;
+    setVerdict(null);
+  }, [state.config]);
 
   const configured = state.config ? SECTIONS[section].flag(state.config) : false;
   const clearing = !value.trim() && configured;
+  const emptyDraft = edited && !value.trim();
   const credential = credentialCopy(section);
 
   const save = () => {
     if (saving || (!value.trim() && !configured)) return;
     setSaving(true);
     setError(null);
+    testGeneration.current++;
     const electronSlot = ELECTRON_CREDENTIAL[section];
     setVerdict(null);
     const request = window.ogb?.setCredential && electronSlot
@@ -230,6 +259,7 @@ export function ApiKeyRow({
       .then((status: ConfigStatus) => {
         dispatch({ type: "configStatus", config: status });
         setValue("");
+        setEdited(false);
         onSaved?.(SECTIONS[section].flag(status));
       })
       .catch((e) => setError(e.message))
@@ -237,21 +267,26 @@ export function ApiKeyRow({
   };
 
   const test = async () => {
-    if (!testProvider || testing) return;
+    if (!testProvider || testing || saving || emptyDraft) return;
     setTesting(true);
     setVerdict(null);
+    const generation = ++testGeneration.current;
+    const draft = Boolean(value.trim());
     try {
-      // A pasted, unsaved key is tried as typed; otherwise the saved one.
+      // Only an untouched empty field tests the saved key; erased drafts stop above.
       const result = await api("/api/keys/test", { method: "POST", body: JSON.stringify({ provider: testProvider, ...(value.trim() ? { key: value.trim() } : {}) }) });
+      if (generation !== testGeneration.current) return;
+      const outcome = result.ok
+        ? result.check === "authentication" ? t("keys.testAuthenticated")
+          : result.models?.length ? t("keys.testCatalog", { models: result.models.join(", ") }) : t("keys.testCatalogNoModels")
+        : result.reason === "rejected" ? t("keys.testRejected")
+          : result.reason === "unreachable" ? t("keys.testUnreachable")
+            : t("keys.testUnexpected", { status: String(result.status ?? "?") });
       setVerdict(
-        result.ok
-          ? result.models?.length ? t("keys.testOk", { models: result.models.join(", ") }) : t("keys.testOkNoModels")
-          : result.reason === "rejected" ? t("keys.testRejected")
-            : result.reason === "unreachable" ? t("keys.testUnreachable")
-              : t("keys.testUnexpected", { status: String(result.status ?? "?") }),
+        `${draft ? t("keys.testDraft") : t("keys.testSaved")} ${outcome}`,
       );
     } catch (cause) {
-      setVerdict(cause instanceof Error ? cause.message : String(cause));
+      if (generation === testGeneration.current) setVerdict(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setTesting(false);
     }
@@ -267,14 +302,15 @@ export function ApiKeyRow({
             {t("keys.optional")}
           </span>
         )}
-        {configured && <span className="text-[11px] text-success">{t("keys.connected")}</span>}
+        {configured && <span className="text-[11px] text-ink-secondary">{t("keys.configured")}</span>}
         <CredentialHelp section={section} />
       </div>
       <div className="flex gap-2">
         <input
           type="password"
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => { testGeneration.current++; setVerdict(null); setEdited(true); setValue(e.target.value); }}
+          disabled={saving}
           onKeyDown={(e) => e.key === "Enter" && save()}
           placeholder={configured ? t("keys.replace") : credential.placeholder}
           aria-label={credential.label}
@@ -299,7 +335,7 @@ export function ApiKeyRow({
           <button
             type="button"
             onClick={() => void test()}
-            disabled={testing || saving}
+            disabled={testing || saving || emptyDraft}
             className="flex shrink-0 items-center justify-center rounded-lg border border-hairline/40 px-3 py-2 text-[13px] text-ink-secondary hover:bg-raised/50 hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
           >
             {testing ? t("keys.testing") : t("keys.test")}
@@ -386,6 +422,55 @@ export function VpsConnection() {
           {saving ? <Loader2 size={13} className="animate-spin" /> : !alias.trim() && configured ? t("keys.clear") : <><Check size={13} />{t("common.save")}</>}
         </button>
       </div>
+      {error && <div className="mt-1 text-[12px] text-danger">{error}</div>}
+    </div>
+  );
+}
+
+/** The Vision engine's base URL: a setting next to its key, so a local
+ * freellmapi proxy and a hosted one are one field away. */
+export function VisionUrl() {
+  const { state, dispatch } = useStore();
+  const saved = state.config?.vision?.url ?? "";
+  const [value, setValue] = useState(saved);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { setValue(saved); }, [saved]);
+  const dirty = value.trim() !== saved;
+
+  const save = () => {
+    if (saving || !dirty) return;
+    setSaving(true);
+    setError(null);
+    api("/api/config", { method: "PUT", body: JSON.stringify({ vision: { url: value.trim() } }) })
+      .then((status: ConfigStatus) => dispatch({ type: "configStatus", config: status }))
+      .catch((e) => setError(e.message))
+      .finally(() => setSaving(false));
+  };
+
+  return (
+    <div>
+      <div className="mb-1.5 text-[13px] text-ink-secondary">{t("keys.vision.url")}</div>
+      <div className="flex gap-2">
+        <input
+          type="url"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && save()}
+          placeholder="http://localhost:3001/v1"
+          aria-label={t("keys.vision.url")}
+          spellCheck={false}
+          className="w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 font-mono text-[12px] text-ink placeholder:text-ink-secondary focus:border-hairline focus:outline-none"
+        />
+        <button
+          onClick={save}
+          disabled={saving || !dirty}
+          className="flex w-[72px] shrink-0 items-center justify-center gap-1.5 rounded-lg bg-control py-2 text-[13px] text-ink hover:bg-raised-hover disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {saving ? <Loader2 size={13} className="animate-spin" /> : <><Check size={13} />{t("common.save")}</>}
+        </button>
+      </div>
+      <p className="mt-1 text-[11.5px] leading-relaxed text-ink-secondary">{t("keys.vision.urlHint")}</p>
       {error && <div className="mt-1 text-[12px] text-danger">{error}</div>}
     </div>
   );

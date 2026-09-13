@@ -74,6 +74,9 @@ export async function runRoomHandoffAgent(argv: string[], planPath: string, prom
     closing = true;
     clearTimeout(timer); clearTimeout(delayTimer); lines.close(); child.stdin.destroy();
     await waitForExit(child, { signal: "SIGTERM", graceMs: 500 });
-    appendFileSync(`${planPath}.evidence.jsonl`, JSON.stringify({ botId, turnIndex, threadId: integration.env.OMB_THREAD_ID, resumed, system, prompt, evidence }) + "\n");
+    appendFileSync(`${planPath}.evidence.jsonl`, JSON.stringify({ botId, turnIndex, threadId: integration.env.OMB_THREAD_ID,
+      model: argv.includes("--model") ? arg("--model") : undefined,
+      permissionMode: argv.includes("--permission-mode") ? arg("--permission-mode") : undefined,
+      resumed, system, prompt, evidence }) + "\n");
   }
 }

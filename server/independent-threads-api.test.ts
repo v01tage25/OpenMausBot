@@ -97,7 +97,7 @@ describe("independent bot tasks through the isolated control surface", () => {
     await session.close();
   });
 
-  it("holds a delegation behind an approval and delivers it once without another user prompt", async () => {
+  it("queues coordinated work behind a peer's approval and delivers it once without another user prompt", async () => {
     const chief = (await tool("create_bot", { name: "Mailbox Chief", instance_id: "claude", model: models[0] })).bot;
     const peer = (await tool("create_bot", { name: "Mailbox Peer", instance_id: "claude", model: models[1] })).bot;
     await api("PATCH", `/api/bots/${peer.id}/tasks/${peer.activeTaskId}`, { approvalMode: "ask" });
@@ -111,18 +111,24 @@ describe("independent bot tasks through the isolated control surface", () => {
     expect(roster.body.bots.find((bot: any) => bot.id === peer.id)).toMatchObject({
       status: "waiting-on-user", statusText: "waiting on the user", busy: true,
     });
-    const queued = await internal(token, "POST", "/api/internal/delegate-bot", {
-      toBotId: peer.id, message: "MAILBOX_REVIEW: check the release notes.",
+    const queued = await internal(token, "POST", "/api/internal/coordinate-bots", {
+      botIds: [peer.id], requestKey: "mailbox-review", message: "MAILBOX_REVIEW: check the release notes.",
     });
-    expect(queued.body.queued).toBe(true);
-    // Finish only the Chief. Its peer remains parked on the actual approval
-    // broker, and the handoff must be visible once without occupying the Chief.
+    expect(queued.status).toBe(200);
+    expect(queued.body.accepted).toHaveLength(1);
+    const requestId = queued.body.accepted[0].requestId;
+    const handoff = () => JSON.parse(readFileSync(join(session.info.dataDir, "room-handoffs.json"), "utf8"))
+      .find((node: any) => node.id === requestId);
+    const peerThread = handoff().threadId;
+    expect(peerThread).not.toBe(peer.activeTaskId);
+    // End the source provider turn. The real approval broker still owns the
+    // peer, so coordinated work stays queued and the source waits for its result.
     writeFileSync(modelFile(models[0], "gate"), "finish");
-    expect((await control(["wait", "--bot", chief.id, "--timeout", "15"])).status).toBe("settled");
     await expect.poll(async () => {
       const current = (await api("GET", "/api/bots")).body.bots.find((bot: any) => bot.id === chief.id);
-      return current.messages.filter((message: any) => message.tool?.name?.includes("who's waiting on you")).length;
+      return current.messages.filter((message: any) => message.tool?.name === "Sent to Mailbox Peer").length;
     }).toBe(1);
+    expect(handoff().status).toBe("queued");
     expect(answers).toEqual([]);
     await control(["messages", "--bot", chief.id, "--limit", "10"]);
     const allowed = await api("POST", `/api/threads/${peer.activeTaskId}/respond`, { requestId: "mailbox-approval", behavior: "allow" });
@@ -133,15 +139,56 @@ describe("independent bot tasks through the isolated control surface", () => {
       const bots = (await api("GET", "/api/bots")).body.bots;
       const current = bots.find((bot: any) => bot.id === chief.id);
       return !current.busy && current.messages.some((message: any) =>
-        message.from?.botId === peer.id && message.text?.includes("MAILBOX_REVIEW"));
+        message.from?.botId === peer.id && message.roomRequest?.id === requestId && message.roomRequest.phase === "result");
     }, { timeout: 20_000 }).toBe(true);
     const bots = (await api("GET", "/api/bots")).body.bots;
     const peerState = bots.find((bot: any) => bot.id === peer.id);
-    expect(peerState.messages.filter((message: any) => message.role === "user" && message.text?.includes("MAILBOX_REVIEW"))).toHaveLength(1);
+    expect(peerState.threadId).toBe(peer.activeTaskId);
+    expect(peerState.messages.some((message: any) => message.text?.includes("MAILBOX_REVIEW"))).toBe(false);
+    const targetMessages = (await api("GET", `/api/threads/${peerThread}/messages?limit=100`)).body.messages;
+    expect(targetMessages.filter((message: any) => message.roomRequest?.id === requestId && message.roomRequest.phase === "request")).toHaveLength(1);
+    expect(targetMessages.some((message: any) => message.text?.includes("MAILBOX_REVIEW"))).toBe(true);
+    expect(handoff().status).toBe("completed");
     expect((await control(["wait", "--bot", peer.id, "--timeout", "15"])).status).toBe("settled");
     await control(["messages", "--bot", peer.id, "--limit", "10"]);
     await control(["messages", "--bot", chief.id, "--limit", "15"]);
   }, 60_000);
+
+  it("replaces the final worked thread with blank context but refuses to delete it while running", async () => {
+    const created = await tool("create_bot", { name: "Last thread fixture", instance_id: "claude", model: models[0] });
+    const botId = created.bot.id;
+    const threadId = created.bot.activeTaskId;
+    await control(["send", "--bot", botId, "--task", threadId, "--text", "LAST_THREAD_WORK"]);
+    await dump(models[0]);
+    expect((await api("DELETE", `/api/bots/${botId}/tasks/${threadId}`)).status).toBe(409);
+    writeFileSync(modelFile(models[0], "gate"), "finish");
+    expect((await control(["wait", "--bot", botId, "--task", threadId, "--timeout", "15"])).status).toBe("settled");
+    const before = (await api("GET", "/api/bots")).body.bots.find((bot: any) => bot.id === botId);
+    expect(before.tasks).toHaveLength(1);
+    expect(before.messages.some((message: any) => message.role === "user" && message.text === "LAST_THREAD_WORK")).toBe(true);
+    const artifact = join(session.info.dataDir, "task-workspaces", botId, threadId, "result.txt");
+    writeFileSync(artifact, "Retain generated project files");
+
+    const deleted = await api("DELETE", `/api/bots/${botId}/tasks/${threadId}`);
+    expect(deleted.status).toBe(200);
+    const fresh = deleted.body.bot;
+    expect(fresh.tasks).toHaveLength(1);
+    expect(fresh.threadId).not.toBe(threadId);
+    expect(fresh.tasks[0]).toMatchObject({ threadId: fresh.threadId, title: "New thread", busy: false });
+    expect(fresh.messages).toEqual([]);
+    expect(fresh.modelSelection).toEqual(before.modelSelection);
+    expect(readFileSync(artifact, "utf8")).toBe("Retain generated project files");
+    expect((await api("DELETE", `/api/bots/${botId}/tasks/${threadId}`)).status).toBe(404);
+    const loaded = (await api("GET", "/api/bots")).body.bots.find((bot: any) => bot.id === botId);
+    expect(loaded.threadId).toBe(fresh.threadId);
+    expect(loaded.messages).toEqual([]);
+    await control(["send", "--bot", botId, "--task", fresh.threadId, "--text", "NEW_THREAD_WORK"]);
+    expect((await control(["wait", "--bot", botId, "--task", fresh.threadId, "--timeout", "15"])).status).toBe("settled");
+    const messages = (await api("GET", "/api/bots")).body.bots.find((bot: any) => bot.id === botId).messages;
+    expect(messages.some((message: any) => message.text === "NEW_THREAD_WORK")).toBe(true);
+    expect(messages.some((message: any) => message.text === "LAST_THREAD_WORK")).toBe(false);
+    evidence.push({ deletedThreadId: threadId, replacementThreadId: fresh.threadId, blankReplacement: true, artifactRetained: true });
+  }, 30_000);
 
   it("rejects blank memory replacements, caps new titles, and retains project files after deletion", async () => {
     const created = await tool("create_bot", { name: "Release review fixture", instance_id: "claude", model: models[0] });

@@ -228,6 +228,10 @@ const featureConfigSchema = z.object({
   /** Experimental built-in browser. Off until explicitly enabled; each bot
    * also has its own switch. */
   browser: z.boolean().optional(),
+  /** Opt-in computer sharing (a desktop lending folders, a terminal or
+   * computer control to a workspace). Off until explicitly enabled; there is
+   * no Settings toggle — see sharedComputersEnabled. */
+  sharedComputers: z.boolean().optional(),
 });
 /** First-run progress. Kept in the workspace config rather than a browser so
  * it survives cleared site data and is shared by every paired client. Hint
@@ -303,11 +307,16 @@ const appConfigSchema = z.object({
   openaiCompat: z
     .object({ key: optionalText, url: optionalText, model: optionalText, provider: optionalText })
     .optional(),
-  /** A running `hermes gateway`: url is the elastic connection point (loopback
+/** A running `hermes gateway`: url is the elastic connection point (loopback
    * today, a VPS tomorrow); `profile` routes via /p/<profile>/ for per-bot
    * memory. See docs/hermes-serve-protocol.md. */
   hermesServe: z
     .object({ key: optionalText, url: optionalText, profile: optionalText, model: optionalText, provider: optionalText })
+    .optional(),
+  /** Unified Vision engine (freellmapi proxy). `url` points at the proxy's
+   * OpenAI-compatible base; `model` seeds the default selection. */
+  vision: z
+    .object({ key: optionalText, url: optionalText, model: optionalText })
     .optional(),
   /** Project key used for Sessions, catalog and agent tools. userId/sessionId
    * are non-secret local identifiers used to reuse one Composio Session. */
@@ -320,6 +329,9 @@ const appConfigSchema = z.object({
    * engine: "elevenlabs" (default; needs a key) or "system" (the Mac's
    * built-in voices, no key). */
   tts: z.object({ key: optionalText, voice: optionalText, provider: z.enum(["elevenlabs", "system"]).optional() }).optional(),
+  /** Composer dictation (hold Ctrl+Space): the Deepgram streaming key. The
+   * desktop shell, not a provider driver, consumes it. */
+  dictation: z.object({ key: optionalText }).optional(),
   /** Avatar provider credentials stay separate; choosing a router never reuses a cloud key. */
   imageGen: z.object({
     provider: z.enum(["openai", "xai", "custom"]).optional(),
@@ -378,16 +390,18 @@ export interface AppConfig {
   budgets?: { monthlyUsd?: number; warnAtPercent?: number };
   billing?: { currency?: string; prices?: Record<string, { inputPerMillion: number; outputPerMillion: number; cachedInputPerMillion?: number }> };
   openaiCompat?: { key?: string; url?: string; model?: string; provider?: string };
-  /** A running `hermes gateway` (local or VPS): the driver is a pure HTTP
+/** A running `hermes gateway` (local or VPS): the driver is a pure HTTP
    * client — no process ownership, no Hermes paths. `profile` isolates a
    * bot's memory/skills via the gateway's /p/<profile>/ routing. */
   hermesServe?: { key?: string; url?: string; profile?: string; model?: string; provider?: string };
+  vision?: { key?: string; url?: string; model?: string };
   composio?: { apiKey?: string; userId?: string; sessionId?: string };
   box?: { token?: string };
   /** A named host from the user's SSH config. Authentication stays with SSH. */
   vps?: { sshAlias?: string };
   opencodeGo?: { apiKey?: string };
   tts?: { key?: string; voice?: string; provider?: "elevenlabs" | "system" };
+  dictation?: { key?: string };
   imageGen?: ImageGenerationConfig;
   profile?: { name?: string; email?: string };
   rooms?: { turnTimeoutMinutes: number };
@@ -396,7 +410,7 @@ export interface AppConfig {
    * separate container, durable workspace, viewer and lease. */
   localVm?: { mode?: "shared" | "per-bot"; maxInstances?: number };
   /** Opt-in product experiments. Every flag defaults to disabled. */
-  features?: { skillAuthoring?: boolean; showToolCalls?: boolean; browser?: boolean };
+  features?: { skillAuthoring?: boolean; showToolCalls?: boolean; browser?: boolean; sharedComputers?: boolean };
   /** First-run progress; see onboardingConfigSchema. */
   onboarding?: { completedAt?: string; version?: number; reelSeen?: boolean; hintsSeen?: string[] };
   /** Named browser sessions any bot can be pointed at. */
@@ -544,6 +558,19 @@ export function builtInBrowserEnabled(cfg: AppConfig): boolean {
   return cfg.features?.browser === true;
 }
 
+/** Opt-in computer sharing: the routes, the agent tools, the advertised
+ * capability and the desktop connector. Off unless an explicit `true` turns
+ * it on, because the reviewed feature still has open security holes (a
+ * read-only folder grant could be escalated to a shell).
+ *
+ * Deliberately NOT a Settings toggle: this is a maintainer-only escape hatch
+ * for an unfinished feature, not a user preference. Someone who needs it
+ * enables it by hand in `~/.openmausbot/config.json`
+ * (`{"features": {"sharedComputers": true}}`) and restarts the server. */
+export function sharedComputersEnabled(cfg: AppConfig): boolean {
+  return cfg.features?.sharedComputers === true;
+}
+
 /** Config sections no provider driver reads. A write that touches only
  * these must not rebuild the fleet: rebuilding disposes every engine child
  * and reloads it, seconds of work that would also interrupt in-flight
@@ -553,6 +580,7 @@ export const FLEET_NEUTRAL_KEYS: ReadonlySet<string> = new Set([
   "profile",
   "language",
   "tts",
+  "dictation",
   "imageGen",
   "vps",
   "rooms",
@@ -642,9 +670,13 @@ export function loadConfig(): AppConfig {
   if (process.env.OPENAI_COMPAT_URL !== undefined) cfg.openaiCompat.url = process.env.OPENAI_COMPAT_URL;
   if (process.env.OPENAI_COMPAT_MODEL !== undefined) cfg.openaiCompat.model = process.env.OPENAI_COMPAT_MODEL;
   if (process.env.OPENAI_COMPAT_PROVIDER !== undefined) cfg.openaiCompat.provider = process.env.OPENAI_COMPAT_PROVIDER;
-  cfg.hermesServe = { ...cfg.hermesServe };
+cfg.hermesServe = { ...cfg.hermesServe };
   if (process.env.HERMES_URL !== undefined) cfg.hermesServe.url = process.env.HERMES_URL;
   if (process.env.HERMES_API_SERVER_KEY !== undefined) cfg.hermesServe.key = process.env.HERMES_API_SERVER_KEY;
+  cfg.vision = { ...cfg.vision };
+  if (process.env.FREELLMAPI_API_KEY !== undefined) cfg.vision.key = process.env.FREELLMAPI_API_KEY;
+  if (process.env.VISION_URL !== undefined) cfg.vision.url = process.env.VISION_URL;
+  if (process.env.VISION_MODEL !== undefined) cfg.vision.model = process.env.VISION_MODEL;
   cfg.composio = { ...cfg.composio };
   if (process.env.COMPOSIO_API_KEY !== undefined) cfg.composio.apiKey = process.env.COMPOSIO_API_KEY;
   cfg.box = { ...cfg.box };
@@ -653,6 +685,8 @@ export function loadConfig(): AppConfig {
   if (process.env.OPENCODE_API_KEY !== undefined) cfg.opencodeGo.apiKey = process.env.OPENCODE_API_KEY;
   cfg.tts = { ...cfg.tts };
   if (process.env.OMB_TTS_KEY !== undefined) cfg.tts.key = process.env.OMB_TTS_KEY;
+  cfg.dictation = { ...cfg.dictation };
+  if (process.env.OMB_DICTATION_KEY !== undefined) cfg.dictation.key = process.env.OMB_DICTATION_KEY;
   cfg.imageGen = { ...cfg.imageGen };
   if (process.env.OMB_OPENAI_IMAGE_KEY !== undefined) cfg.imageGen.key = process.env.OMB_OPENAI_IMAGE_KEY;
   if (process.env.OMB_CUSTOM_IMAGE_KEY !== undefined) cfg.imageGen.customApiKey = process.env.OMB_CUSTOM_IMAGE_KEY;
@@ -679,11 +713,13 @@ export function syncCredentialEnv(patch: Partial<AppConfig>): void {
     [patch.xai?.key, "XAI_API_KEY"],
     [patch.anthropic?.key, "OMB_ANTHROPIC_API_KEY"],
     [patch.openaiCompat?.key, "OPENAI_COMPAT_API_KEY"],
-    [patch.hermesServe?.key, "HERMES_API_SERVER_KEY"],
+[patch.hermesServe?.key, "HERMES_API_SERVER_KEY"],
+    [patch.vision?.key, "FREELLMAPI_API_KEY"],
     [patch.composio?.apiKey, "COMPOSIO_API_KEY"],
     [patch.box?.token, "BOX_TOKEN"],
     [patch.opencodeGo?.apiKey, "OPENCODE_API_KEY"],
     [patch.tts?.key, "OMB_TTS_KEY"],
+    [patch.dictation?.key, "OMB_DICTATION_KEY"],
     [patch.imageGen?.key, "OMB_OPENAI_IMAGE_KEY"],
     [patch.imageGen?.customApiKey, "OMB_CUSTOM_IMAGE_KEY"],
   ];
@@ -700,6 +736,8 @@ export function syncCredentialEnv(patch: Partial<AppConfig>): void {
     [patch.anthropic?.url, "OMB_ANTHROPIC_API_URL"],
     [patch.openaiCompat?.model, "OPENAI_COMPAT_MODEL"],
     [patch.openaiCompat?.provider, "OPENAI_COMPAT_PROVIDER"],
+    [patch.vision?.url, "VISION_URL"],
+    [patch.vision?.model, "VISION_MODEL"],
   ];
   for (const [value, name] of settings) {
     if (value === undefined) continue;
@@ -719,9 +757,12 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "OMB_ANTHROPIC_API_URL",
   "OPENAI_COMPAT_API_KEY",
   "OPENAI_COMPAT_URL",
+  "FREELLMAPI_API_KEY",
+  "VISION_URL",
   "BOX_TOKEN",
   "OPENCODE_API_KEY",
   "OMB_TTS_KEY",
+  "OMB_DICTATION_KEY",
   "OMB_OPENAI_IMAGE_KEY",
   "OMB_CUSTOM_IMAGE_KEY",
   "COMPOSIO_API_KEY",
@@ -774,7 +815,7 @@ export function saveConfig(patch: Partial<AppConfig>, options: { replaceInstance
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["xai", "anthropic", "openaiCompat", "hermesServe", "composio", "box", "opencodeGo", "tts", "imageGen", "profile", "rooms", "threads", "localVm", "features", "budgets", "billing", "onboarding"] as const) {
+for (const key of ["xai", "anthropic", "openaiCompat", "hermesServe", "vision", "composio", "box", "opencodeGo", "tts", "dictation", "imageGen", "profile", "rooms", "threads", "localVm", "features", "budgets", "billing", "onboarding"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);
@@ -910,10 +951,12 @@ function injectedEnvironment(cfg: AppConfig, driver: string): Map<string, string
     environment.set("OPENAI_COMPAT_API_KEY", cfg.openaiCompat.key);
   if (driver === "openai-compat" && cfg.openaiCompat?.url)
     environment.set("OPENAI_COMPAT_URL", cfg.openaiCompat.url);
-  if (driver === "hermesServe" && cfg.hermesServe?.key)
+if (driver === "hermesServe" && cfg.hermesServe?.key)
     environment.set("HERMES_API_SERVER_KEY", cfg.hermesServe.key);
   if (driver === "hermesServe" && cfg.hermesServe?.url)
     environment.set("HERMES_URL", cfg.hermesServe.url);
+  if (driver === "vision" && cfg.vision?.key) environment.set("FREELLMAPI_API_KEY", cfg.vision.key);
+  if (driver === "vision" && cfg.vision?.url) environment.set("VISION_URL", cfg.vision.url);
   if (driver === "boxAgent" && cfg.box?.token) environment.set("BOX_TOKEN", cfg.box.token);
   if (driver === "opencodeGo" && cfg.opencodeGo?.apiKey) environment.set("OPENCODE_API_KEY", cfg.opencodeGo.apiKey);
   return environment;
@@ -940,6 +983,7 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
   // The driver stays registered for enterprise licences, which keep Gemini
   // CLI — `{"instances": {"gemini": {"driver": "geminiAgent"}}}` restores it.
   const DEFAULT_FLEET: InstanceConfigMap = {
+    vision: { driver: "vision" },
     grok: { driver: "grokAgent" },
     kimi: { driver: "kimiAgent" },
     droid: { driver: "droidAgent" },
@@ -966,6 +1010,7 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
   const PRODUCT_FLEET_ADDITIONS = {
     cursor: { driver: "cursorAgent" },
     openaiCompat: { driver: "openai-compat" },
+    vision: { driver: "vision" },
     ...CUSTOM_ONLY,
   } as const;
   const configured = cfg.instances && Object.keys(cfg.instances).length ? cfg.instances : null;
@@ -1013,7 +1058,7 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
         entry.config = merged;
       }
     }
-    if (entry.driver === "hermesServe" && cfg.hermesServe) {
+if (entry.driver === "hermesServe" && cfg.hermesServe) {
       const defaults: Record<string, string> = {};
       if (cfg.hermesServe.url) defaults.url = cfg.hermesServe.url;
       if (cfg.hermesServe.profile) defaults.profile = cfg.hermesServe.profile;
@@ -1025,6 +1070,24 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
           typeof raw === "object" && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
         const merged = { ...current };
         // A per-instance value always wins over the workspace default.
+        for (const [k, v] of Object.entries(defaults)) {
+          if (typeof merged[k] !== "string" || !(merged[k] as string).trim()) merged[k] = v;
+        }
+        entry.config = merged;
+      }
+    }
+    // Same workspace-default layering for the unified Vision engine. A
+    // per-instance value always wins; the driver's decodeConfig keeps its own
+    // localhost defaults when neither layer supplies a URL.
+    if (entry.driver === "vision" && cfg.vision) {
+      const defaults: Record<string, string> = {};
+      if (cfg.vision.url) defaults.url = cfg.vision.url;
+      if (cfg.vision.model) defaults.model = cfg.vision.model;
+      if (Object.keys(defaults).length) {
+        const raw = entry.config;
+        const current =
+          typeof raw === "object" && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+        const merged = { ...current };
         for (const [k, v] of Object.entries(defaults)) {
           if (typeof merged[k] !== "string" || !(merged[k] as string).trim()) merged[k] = v;
         }

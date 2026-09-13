@@ -7,6 +7,7 @@ import type { BotRecord } from "./store.ts";
 import type { Routine } from "./routines.ts";
 import type { RoutineRequestSchedule } from "../shared/routine-request.ts";
 import { approvalModeFor } from "../shared/approval-mode.ts";
+import { cronScheduleLabel } from "../shared/cron-label.ts";
 
 export interface BotOverview {
   who: { name: string; title: string; blurb: string; soulLead: string };
@@ -47,6 +48,7 @@ export interface OverviewFacts {
     | "composio"
     | "browser"
     | "chiefOfStaff"
+    | "managedSections"
   >;
   routines: Array<{
     id: string;
@@ -103,6 +105,7 @@ function clockTime(hhmm: string): string {
  * approval card's scheduleText() carries the anchor instant and timezone
  * name because a card must be exact; a plain-language overview must not. */
 function schedulePhrase(schedule: OverviewFacts["routines"][number]["schedule"], timeZone: string): string {
+  if (schedule.type === "cron") return cronScheduleLabel(schedule);
   if (schedule.type === "once") {
     const date = new Date(schedule.at).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone });
     return `Once on ${date} at ${time(schedule.at, timeZone)}`;
@@ -227,9 +230,13 @@ function reachesLines(facts: OverviewFacts): string[] {
   }
   if (facts.browserEnabled && facts.engine?.browserMcp && facts.bot.browser !== false && facts.bot.computer !== "off") lines.push("Has the built-in browser.");
   if (facts.engine?.agentsMcp && facts.sectionPeers > 0 && facts.bot.peers?.length !== 0) {
-    lines.push(`Can talk to ${facts.sectionPeers} other bot${facts.sectionPeers === 1 ? "" : "s"} in its section.`);
+    const scope = facts.bot.chiefOfStaff && facts.bot.managedSections?.length ? "its allowed teams" : "its section";
+    lines.push(`Can talk to ${facts.sectionPeers} other bot${facts.sectionPeers === 1 ? "" : "s"} in ${scope}.`);
   }
   if (facts.bot.chiefOfStaff) lines.push("Coordinates its section as Chief of Staff.");
+  if (facts.bot.chiefOfStaff && facts.bot.managedSections?.length) {
+    lines.push(`May also coordinate these teams: ${facts.bot.managedSections.map(name => name || "General").join(", ")}.`);
+  }
   return lines;
 }
 
