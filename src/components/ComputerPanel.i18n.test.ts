@@ -20,6 +20,7 @@ const capabilities: DesktopCapabilities = {
 
 vi.mock("./DesktopCapabilities", () => ({
   useDesktopCapabilities: () => ({ capabilities, ready: true }),
+  useCaptionChrome: () => ({ windowsCaption: false, dragStyle: undefined, noDragStyle: undefined, controlsShiftStyle: undefined, padClass: undefined }),
 }));
 
 const { LocalScreenPreview } = await import("./LocalScreenPreview");

@@ -15,6 +15,7 @@ vi.mock("@/state/store", async (importOriginal) => {
 });
 vi.mock("./DesktopCapabilities", () => ({
   useDesktopCapabilities: () => ({ capabilities: { host: {}, dictation: { available: false } }, ready: true }),
+  useCaptionChrome: () => ({ windowsCaption: false, dragStyle: undefined, noDragStyle: undefined, controlsShiftStyle: undefined, padClass: undefined }),
 }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 

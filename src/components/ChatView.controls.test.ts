@@ -20,6 +20,7 @@ vi.mock("@/state/store", async (importOriginal) => {
 });
 vi.mock("./DesktopCapabilities", () => ({
   useDesktopCapabilities: () => ({ capabilities: { dictation: { available: false }, host: { packaged: true } }, ready: true }),
+  useCaptionChrome: () => ({ windowsCaption: false, dragStyle: undefined, noDragStyle: undefined, controlsShiftStyle: undefined, padClass: undefined }),
 }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 vi.mock("./ModelPicker", () => ({ ModelPicker: (props: ComponentProps<typeof ModelPicker>) => {

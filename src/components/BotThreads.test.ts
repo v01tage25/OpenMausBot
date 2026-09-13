@@ -6,7 +6,10 @@ import { BotThreadList, GroupThreadList } from "./Sidebar";
 import { GroupTaskPicker, TaskPicker } from "./TaskPicker";
 import { workingFolderLabel } from "./ComposerTray";
 
-vi.mock("./DesktopCapabilities", () => ({ useDesktopCapabilities: () => ({}) }));
+vi.mock("./DesktopCapabilities", () => ({
+  useDesktopCapabilities: () => ({}),
+  useCaptionChrome: () => ({ windowsCaption: false, dragStyle: undefined, noDragStyle: undefined, controlsShiftStyle: undefined, padClass: undefined }),
+}));
 
 const bot: Bot = {
   id: "maus", threadId: "idle", name: "Maus", title: "", description: "", notifications: true,

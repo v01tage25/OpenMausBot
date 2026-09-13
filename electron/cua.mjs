@@ -15,7 +15,7 @@
 // <userData>/cua-connection.json for the harness server to hand to drivers.
 
 import { app, ipcMain } from "electron";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
@@ -51,6 +51,19 @@ const HOST_BUNDLE_ID = "com.openmausbot.app";
 const CUA_ENV = { CUA_DRIVER_RS_TELEMETRY_ENABLED: "0" };
 const execFileAsync = promisify(execFile);
 process.env.CUA_DRIVER_RS_TELEMETRY_ENABLED ??= "0";
+
+// The Windows build has no signed .app to attribute TCC grants to, so the
+// daemon is reached over the driver's own endpoint instead. `cua-driver`
+// installs itself under the user profile and listens on a fixed named pipe;
+// the endpoints below mirror that layout, with the installer's PATH shim as
+// a fallback for machines where the packages directory moved.
+const WIN_INSTALLED_DRIVERS = [
+  path.join(app.getPath("home"), ".cua-driver", "packages", "current", "cua-driver.exe"),
+  path.join(app.getPath("home"), "AppData", "Local", "Programs", "CuaDriver", "cua-driver.exe"),
+];
+// A named pipe is not a filesystem path: fs.existsSync always reports false
+// for it, so liveness must be probed with a connection, never a stat.
+const WIN_STANDALONE_SOCKET = "\\\\.\\pipe\\cua-driver";
 
 let embeddedHost = null; // EmbeddedCuaDriverHost | null
 let startupAbort = null;
@@ -120,19 +133,36 @@ function persistAndNotify(next) {
   return connection;
 }
 
+export function resolveWindowsDriver() {
+  for (const candidate of WIN_INSTALLED_DRIVERS) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 export function resolveDriverBinary() {
   if (process.env.CUA_DRIVER_PATH) return process.env.CUA_DRIVER_PATH;
   if (app.isPackaged) {
-    const bundled = path.join(process.resourcesPath, "cua-driver");
+    const bundled = path.join(process.resourcesPath, "cua-driver" + (process.platform === "win32" ? ".exe" : ""));
     if (fs.existsSync(bundled)) return bundled;
   }
-  if (fs.existsSync(INSTALLED_DRIVER)) return INSTALLED_DRIVER;
+  if (process.platform === "darwin" && fs.existsSync(INSTALLED_DRIVER)) return INSTALLED_DRIVER;
+  if (process.platform === "win32") return resolveWindowsDriver();
+  return null;
+}
+
+function standaloneSocket() {
+  if (process.platform === "darwin") return STANDALONE_SOCKET;
+  if (process.platform === "win32") return WIN_STANDALONE_SOCKET;
   return null;
 }
 
 function socketAlive(sockPath) {
   return new Promise((resolve) => {
-    if (!fs.existsSync(sockPath)) return resolve(false);
+    // A Windows named pipe never exists on disk, and a stale unix socket file
+    // can outlive its daemon. Connect first and let the OS answer, so liveness
+    // is never guessed from a path that may be meaningless or stale.
+    if (process.platform !== "win32" && !fs.existsSync(sockPath)) return resolve(false);
     const s = net.createConnection(sockPath);
     let timer;
     const done = (ok) => {
@@ -155,16 +185,49 @@ async function loadEmbeddedSdk() {
     ]);
     return { ...embedded, ...permissions };
   }
+  const isWindows = process.platform === "win32";
   process.env.OPENMAUSBOT_CUA_SDK_LIBRARY = path.join(
     process.resourcesPath,
     "cua-sdk",
     "native",
-    "libcua_driver_sdk.dylib",
+    isWindows ? "cua_driver_sdk.dll" : "libcua_driver_sdk.dylib",
   );
   return import(pathToFileURL(path.join(process.resourcesPath, "cua-sdk", "cua-sdk.mjs")).href);
 }
 
 async function attachStandalone(signal) {
+  if (process.platform === "win32") {
+    const driver = resolveWindowsDriver();
+    if (!driver) return null;
+    if (!(await socketAlive(WIN_STANDALONE_SOCKET))) {
+      // Launch the daemon detached and let it own its lifetime: `serve` never
+      // exits, so a timeout here would block this handler for its full
+      // duration and then kill the daemon it just started. The driver picks
+      // its own fixed pipe, so the probe below waits for that same endpoint
+      // and spawn errors stay ignored — the probe reports them.
+      const child = spawn(driver, ["serve"], {
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+        env: { ...process.env, ...CUA_ENV },
+      });
+      child.on("error", () => {});
+      child.unref();
+      for (let i = 0; i < 25; i++) {
+        signal.throwIfAborted();
+        if (await socketAlive(WIN_STANDALONE_SOCKET)) break;
+        await delay(200, undefined, { signal });
+      }
+    }
+    if (!(await socketAlive(WIN_STANDALONE_SOCKET))) return null;
+    return {
+      mode: "standalone",
+      socketPath: WIN_STANDALONE_SOCKET,
+      mcpCommand: driver,
+      mcpArgs: ["mcp"],
+      mcpEnv: { ...CUA_ENV },
+    };
+  }
   const driver = fs.existsSync(INSTALLED_DRIVER) ? INSTALLED_DRIVER : null;
   if (!driver) return null;
   if (!(await socketAlive(STANDALONE_SOCKET))) {
@@ -203,6 +266,30 @@ async function startEmbedded(binary, signal) {
   // excludes general node_modules, so a bare package import only works in dev.
   const sdk = await loadEmbeddedSdk();
   signal.throwIfAborted();
+  if (process.platform === "win32") {
+    // Windows: no macOS-style TCC prompts. The embedded host will request
+    // necessary permissions (UI Access, etc.) on startup.
+    const host = new sdk.EmbeddedCuaDriverHost(binary, HOST_BUNDLE_ID);
+    try {
+      const conn = await host.start();
+      embeddedHost = host;
+      return {
+        mode: "embedded",
+        socketPath: conn.socketPath,
+        mcpCommand: binary,
+        mcpArgs: ["mcp", "--embedded", "--socket", conn.socketPath],
+        mcpEnv: { ...CUA_ENV, CUA_DRIVER_EMBEDDED: "1", CUA_DRIVER_HOST_BUNDLE_ID: HOST_BUNDLE_ID },
+      };
+    } catch (err) {
+      try {
+        await host.stop();
+      } catch {
+        // startup already failed; stop is best-effort before destroy
+      }
+      host.uniffiDestroy?.();
+      throw err;
+    }
+  }
   // CUA's embedding contract requires grants before the child daemon starts;
   // these SDK calls execute in Electron main so macOS attributes them to
   // OpenMausBot rather than to a terminal or helper process.
@@ -276,11 +363,11 @@ export async function startCua() {
         };
       }
     }
-  } else if (await socketAlive(STANDALONE_SOCKET)) {
-    // Dev machine with CuaDriver.app's daemon already running.
+  } else if (await socketAlive(standaloneSocket())) {
+    // Dev machine with the platform CuaDriver daemon already running.
     nextConnection = {
       mode: "standalone",
-      socketPath: STANDALONE_SOCKET,
+      socketPath: standaloneSocket(),
       mcpCommand: binary,
       mcpArgs: ["mcp"],
       mcpEnv: { ...CUA_ENV },
@@ -372,9 +459,10 @@ export function registerCuaIpc() {
     return ensureLinuxRuntime().getStatus();
   }));
   ipcMain.handle("cua:linux-retry", localOnly("cua:linux-retry", async () => {
-    if (process.platform === "darwin") {
+    if (process.platform === "darwin" || process.platform === "win32") {
       // Concurrent IPC requests share the whole stop/start sequence. A later
       // explicit Stop (including quit) or startup cancels its delayed restart.
+      const platformLabel = process.platform === "darwin" ? "macOS" : "Windows";
       macRetry ??= (async () => {
         try {
           const stopping = stopCua();
@@ -390,7 +478,7 @@ export function registerCuaIpc() {
             message: connection?.reason,
           };
         } catch (error) {
-          console.error("[cua] macOS retry failed:", error);
+          console.error(`[cua] ${platformLabel} retry failed:`, error);
           return {
             enabled: false,
             status: "error",

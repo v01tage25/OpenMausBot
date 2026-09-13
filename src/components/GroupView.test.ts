@@ -6,6 +6,7 @@ import { StoreProvider, type Message } from "@/state/store";
 
 vi.mock("./DesktopCapabilities", () => ({
   useDesktopCapabilities: () => ({}),
+  useCaptionChrome: () => ({ windowsCaption: false, dragStyle: undefined, noDragStyle: undefined, controlsShiftStyle: undefined, padClass: undefined }),
 }));
 
 import { RoomToolChip } from "./GroupView";
