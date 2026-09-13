@@ -129,14 +129,21 @@ export function BotSelect({
     };
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("pointerdown", onPointerDown);
-    // The list is the thing the person opened the picker for, so focus lands
-    // on the first thing they can type into.
-    if (bots.length >= SEARCH_THRESHOLD) searchRef.current?.focus();
     return () => {
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("pointerdown", onPointerDown);
     };
-  }, [open, bots.length]);
+    // `open` only. `bots.length` used to be here too, which meant a board poll
+    // that changed the roster tore the listeners down and re-ran the effect —
+    // and re-focused the search box under whoever was typing in it.
+  }, [open]);
+
+  // Focus the search box once, when the list opens, and not again while it is
+  // being typed into.
+  useEffect(() => {
+    if (!open) return;
+    if (bots.length >= SEARCH_THRESHOLD) searchRef.current?.focus();
+  }, [open]);
 
   const needle = query.trim().toLowerCase();
   const shown = needle

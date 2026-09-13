@@ -73,12 +73,26 @@ export function CardEditorDialog({ open, card, bots, onCancel, onSubmit }: CardE
     titleRef.current?.select();
   }, [open]);
 
+  /** The latest `onCancel`, held in a ref so the key handler can call it without
+ * listing it as a dependency.
+ *
+ * The handler only needs to be installed once while the dialog is open. If it
+ * depended on the callback, a parent that re-created that callback every
+ * render would tear the listener down and re-add it on every keystroke — which
+ * is exactly how this dialog used to lose the caret. Reading through a ref
+ * makes that failure impossible rather than merely absent, so a future caller
+ * cannot bring it back by passing an inline arrow. */
+  const cancelRef = useRef(onCancel);
+  useEffect(() => {
+    cancelRef.current = onCancel;
+  }, [onCancel]);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onCancel();
+        cancelRef.current();
         return;
       }
       if (event.key === "Tab") {
@@ -99,7 +113,8 @@ export function CardEditorDialog({ open, card, bots, onCancel, onSubmit }: CardE
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onCancel]);
+    // `open` only — the callback is read through cancelRef above.
+  }, [open]);
 
   // A title is the one thing a card cannot be without, so the submit button
   // says so by being off rather than by failing after the fact.
