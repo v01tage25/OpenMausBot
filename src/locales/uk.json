@@ -2003,5 +2003,15 @@
   "taskBoard.delete.label": "Видалити картку",
   "taskBoard.delete.confirm": "Видалити цю картку? Чат бота залишиться.",
   "taskBoard.card.moveError": "Не вдалося перемістити картку.",
-  "taskBoard.actionError": "Це не спрацювало."
+  "taskBoard.actionError": "Це не спрацювало.",
+  "window.minimize": "Згорнути",
+  "window.maximize": "Розгорнути",
+  "window.restore": "Відновити",
+  "window.close": "Закрити",
+  "keys.hermesServe.label": "Ключ API шлюзу Hermes",
+  "keys.hermesServe.placeholder": "gateway API_SERVER_KEY",
+  "keys.hermesServe.desc": "Підключіть запущений шлюз агента Hermes (локально або на VPS). Кожен бот отримує власний профіль пам'яті Hermes — агент навчається й пам'ятає окремо для кожного бота.",
+  "keys.hermesServe.link": "Hermes Agent на GitHub",
+  "keys.hermesServe.url": "URL шлюзу Hermes",
+  "keys.hermesServe.urlHint": "Еластичне підключення: http://127.0.0.1:8642 для локального шлюзу або URL вашого VPS. Зміна цього переносить усіх ботів Hermes на новий шлюз без будь-яких інших налаштувань."
 }

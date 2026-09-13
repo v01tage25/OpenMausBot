@@ -237,14 +237,16 @@ describe("HermesServeDriver (fake gateway)", () => {
     await instance.adapter.sendTurn({ threadId: "t-effort", text: "think hard", effort: "high" });
     await recorder.until((e) => e.type === "turn.completed");
     const chat = fake?.calls.find((c) => c.url.includes("/chat/stream"));
-    expect((chat?.body as Record<string, unknown>).model_options).toEqual({
+    expect(chat).toBeDefined();
+    expect((chat!.body as Record<string, unknown>).model_options).toEqual({
       reasoning: { enabled: true, effort: "high" },
     });
 
     await instance.adapter.sendTurn({ threadId: "t-effort-off", text: "no thinking", effort: "none" });
-    await recorder.until((e) => e.type === "turn.completed" && e.turnId !== (chat?.body as unknown));
+    await recorder.until((e) => e.type === "turn.completed" && e.turnId !== (chat!.body as unknown));
     const chat2 = fake?.calls.filter((c) => c.url.includes("/chat/stream")).at(-1);
-    expect((chat2?.body as Record<string, unknown>).model_options).toEqual({ reasoning: { enabled: false } });
+    expect(chat2).toBeDefined();
+    expect((chat2!.body as Record<string, unknown>).model_options).toEqual({ reasoning: { enabled: false } });
   });
 
   it("declares the reasoning ladder the gateway accepts", async () => {
@@ -299,8 +301,9 @@ describe("HermesServeDriver (fake gateway)", () => {
       await instance.adapter.sendTurn({ threadId: "t-cat", text: "hi", model: "opencode-free:muse-spark-1.3-contributor-free" });
       await recorder.until((e) => e.type === "turn.completed");
       const chat = calls.find((c) => c.url.includes("/chat/stream"));
-      expect((chat?.body as Record<string, unknown>).provider).toBe("opencode-free");
-      expect((chat?.body as Record<string, unknown>).model).toBe("muse-spark-1.3-contributor-free");
+      expect(chat).toBeDefined();
+      expect((chat!.body as Record<string, unknown>).provider).toBe("opencode-free");
+      expect((chat!.body as Record<string, unknown>).model).toBe("muse-spark-1.3-contributor-free");
     } finally {
       globalThis.fetch = previous;
     }
