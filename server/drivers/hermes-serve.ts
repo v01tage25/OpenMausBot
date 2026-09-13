@@ -208,34 +208,61 @@ export const HermesServeDriver: ProviderDriver<HermesServeConfig> = {
       }
     };
 
-    const turnMessage = (turn: SendTurnInput): string => {
-      // Persona rides session creation's system_prompt; a recovered thread
-      // (the gateway lost the session) replays context inline, once.
-      if (turn.resumeCursor && turn.recoveryText) {
+    const turnMessage = (turn: SendTurnInput, recovery = false): string => {
+      // A resuming turn carries ONLY the new text. The live session already
+      // holds the history, so gluing recoveryText onto every turn made each
+      // message a full transcript replay and grew the session quadratically.
+      // recoveryText is for the one case the gateway really lost the session
+      // — it is used at most once per turn, on the 404 retry in streamTurn.
+      if (recovery && turn.recoveryText) {
         return `${turn.text}\n\n[Earlier conversation the session lost]\n${turn.recoveryText}`;
       }
       return turn.text;
     };
 
-    const openSession = async (turn: SendTurnInput): Promise<string> => {
-      const cursor = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
-      if (cursor) {
-        // Trust the cursor; a dead session surfaces on the chat 404 path.
-        return cursor;
-      }
-      const body: Record<string, unknown> = {
-        id: sessionCandidateId(turn.threadId),
-        title: displayName ? `${displayName} (OpenMausBot)` : "OpenMausBot thread",
-        source: "api_server",
-      };
+    /** Create a gateway session for this turn and return its id.
+     *
+     * The gateway enforces a GLOBAL unique title across sessions
+     * (api_server._handle_create_session → 400 "Title already in use"), and
+     * every thread of one instance used to claim the same string, so only the
+     * first session ever got created and every other thread died on a 400.
+     * The title is therefore per-thread, and a title-less create is kept as a
+     * fallback for the residual race where two threads still collide — on the
+     * gateway `title` is optional and the uniqueness check is skipped when it
+     * is absent. */
+    const createSession = async (turn: SendTurnInput, options: { title?: boolean } = {}): Promise<string> => {
+      const requestedId = sessionCandidateId(turn.threadId);
+      const body: Record<string, unknown> = { id: requestedId, source: "api_server" };
       if (turn.system) body.system_prompt = turn.system;
-      const created = await api("/api/sessions", { method: "POST", body: JSON.stringify(body) });
+      if (options.title !== false) {
+        body.title = `${displayName ? `${displayName} (OpenMausBot)` : "OpenMausBot"} · ${turn.threadId.slice(-8)}`;
+      }
+      const create = (payload: Record<string, unknown>) =>
+        api("/api/sessions", { method: "POST", body: JSON.stringify(payload) });
+      let created: Record<string, unknown>;
+      try {
+        created = await create(body);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (!/HTTP 400/.test(message) || !/title/i.test(message)) throw error;
+        appendNative(`hermes:${instanceId}`, { dir: "in", source: "hermes-serve", msg: { titleRejected: message } });
+        const untitled = { ...body };
+        delete untitled.title;
+        created = await create(untitled);
+      }
       const session = (created.session ?? created) as Record<string, unknown>;
-      const requestedId = body.id as string;
       const id = typeof session.id === "string" ? session.id : requestedId;
       appendNative(`hermes:${instanceId}`, { dir: "out", source: "hermes-serve", msg: { createSession: requestedId } });
       appendNative(`hermes:${instanceId}`, { dir: "in", source: "hermes-serve", msg: created });
       return id;
+    };
+
+    const openSession = async (turn: SendTurnInput): Promise<string> => {
+      const cursor = typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
+      // A cursor IS the session: trust it, and let a dead one surface on the
+      // chat 404 path (which recovers on a fresh createSession).
+      if (cursor) return cursor;
+      return createSession(turn);
     };
 
     const sendTurn = async (turn: SendTurnInput): Promise<{ turnId: TurnId }> => {
@@ -290,33 +317,54 @@ export const HermesServeDriver: ProviderDriver<HermesServeConfig> = {
     ) => {
       let runId: string | null = null;
       let reportedSession = sessionId;
+      // The session the CURRENT attempt is streaming against. A 404 recovery
+      // swaps it for a fresh one, and the retry's run.started frames report
+      // that new id — comparing against the original parameter would look
+      // like a change and re-announce the same session twice.
+      let activeSession = sessionId;
       try {
-        const res = await fetch(`${base}/api/sessions/${encodeURIComponent(sessionId)}/chat/stream`, {
+        let res = await fetch(`${base}/api/sessions/${encodeURIComponent(activeSession)}/chat/stream`, {
           method: "POST",
           headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
           body: JSON.stringify(body),
           signal,
         });
         if (res.status === 404) {
-          // The gateway lost this session (fresh state.db). Recreate and
-          // replay once via recoveryText so the thread is not blank.
-          const fresh = await api("/api/sessions", {
-            method: "POST",
-            body: JSON.stringify({ id: sessionCandidateId(turn.threadId), source: "api_server" }),
-          });
-          const session = (fresh.session ?? fresh) as Record<string, unknown>;
-          const freshId = typeof session.id === "string" ? session.id : "";
-          const entry = live.get(turn.threadId);
-          if (entry) entry.sessionId = freshId;
-          emit({ ...eventBase(turn.threadId, turnId), type: "runtime.error",
-            message: "Hermes session was lost; created a new session (context replayed if available)" });
-          emit({ ...eventBase(turn.threadId, turnId), type: "session.started", sessionId: freshId, model: null });
+          // The gateway lost this session (fresh state.db). This is the ONLY
+          // place the inline replay belongs: recreate the session and send
+          // the turn once more with the recovery prompt so the thread is not
+          // blank. No cursor means there was nothing to resume — fail closed
+          // rather than retry, since a retry could only be a fresh session
+          // with no history and the turn already carries no rebuild.
           if (!turn.resumeCursor) {
+            emit({ ...eventBase(turn.threadId, turnId), type: "runtime.error",
+              message: "Hermes session was lost and there was no history to resume" });
             emit({ ...eventBase(turn.threadId, turnId), type: "turn.completed", ok: false,
               stopReason: "session-reset", cost: null });
             return;
           }
-          return;
+          // Recreate through the same helper the first turn uses, so the
+          // replacement carries a per-thread title too and a title collision
+          // cannot turn a recoverable lost session into a hard failure.
+          const freshId = await createSession(turn, { title: true });
+          if (!freshId) throw new Error("Hermes gateway did not return a session id for the replacement session");
+          activeSession = freshId;
+          const entry = live.get(turn.threadId);
+          if (entry) entry.sessionId = freshId;
+          reportedSession = freshId;
+          emit({ ...eventBase(turn.threadId, turnId), type: "runtime.error",
+            message: "Hermes session was lost; recounting the thread in a new session" });
+          emit({ ...eventBase(turn.threadId, turnId), type: "session.started", sessionId: freshId, model: null });
+          // ONE retry: same turn, rebuilt prompt, brand-new session.
+          res = await fetch(`${base}/api/sessions/${encodeURIComponent(activeSession)}/chat/stream`, {
+            method: "POST",
+            headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+            body: JSON.stringify({ ...body, message: turnMessage(turn, true) }),
+            signal,
+          });
+          if (res.status === 404) {
+            throw new Error("Hermes gateway rejected the replacement session as missing too");
+          }
         }
         if (!res.ok || !res.body) {
           const text = await res.text().catch(() => "");
@@ -328,7 +376,23 @@ export const HermesServeDriver: ProviderDriver<HermesServeConfig> = {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         const parser = new SseParser();
-        let completed = false;
+        // Two things can end the stream: an explicit completion (run.completed,
+        // run.failed, error) or the socket simply closing. Track which, so the
+        // turn is settled EXACTLY once — the run chip clears on the first
+        // turn.completed, and emitting a second one after `done` left the
+        // client waiting for a settlement that had already happened.
+        let settled = false;
+        const settle = (ok: boolean, stopReason: string | null, usage?: { input: number; output: number }) => {
+          if (settled) return;
+          settled = true;
+          emit({ ...eventBase(turn.threadId, turnId), type: "turn.completed", ok,
+            stopReason, cost: null, ...(usage ? { usage } : {}) });
+        };
+        // Tool calls are paired by name: a start without its completion is a
+        // step that never stops spinning. The gateway can emit tool.started
+        // for a call whose result never streams (aborted tool, dropped frame);
+        // close those here so the step count matches the tools that ran.
+        const openTools = new Set<string>();
         readLoop: for (;;) {
           const { done, value } = await reader.read();
           if (done) break;
@@ -340,8 +404,9 @@ export const HermesServeDriver: ProviderDriver<HermesServeConfig> = {
                 runId = typeof d.run_id === "string" ? d.run_id : null;
                 if (entry) entry.runId = runId;
                 reportedSession = typeof d.session_id === "string" ? d.session_id : reportedSession;
-                if (typeof d.session_id === "string" && d.session_id !== sessionId) {
+                if (typeof d.session_id === "string" && d.session_id !== activeSession) {
                   const effective = d.session_id as string;
+                  activeSession = effective;
                   if (entry) entry.sessionId = effective;
                   emit({ ...eventBase(turn.threadId, turnId), type: "session.started",
                     sessionId: effective, model: runtimeModel(d) });
@@ -369,30 +434,29 @@ export const HermesServeDriver: ProviderDriver<HermesServeConfig> = {
                 break;
               }
               case "tool.started": {
+                const toolName = typeof d.tool_name === "string" ? d.tool_name : "tool";
+                openTools.add(toolName);
                 emit({ ...eventBase(turn.threadId, turnId), type: "item.started", itemType: "tool",
                   title: typeof d.tool_name === "string" ? d.tool_name : undefined,
                   summary: oneLinePreview(d.preview) });
                 break;
               }
-              case "tool.completed": {
-                emit({ ...eventBase(turn.threadId, turnId), type: "item.completed", itemType: "tool", ok: true });
-                break;
-              }
+              case "tool.completed":
               case "tool.failed": {
-                emit({ ...eventBase(turn.threadId, turnId), type: "item.completed", itemType: "tool", ok: false });
+                const toolName = typeof d.tool_name === "string" ? d.tool_name : "tool";
+                openTools.delete(toolName);
+                emit({ ...eventBase(turn.threadId, turnId), type: "item.completed", itemType: "tool",
+                  ok: frame.event === "tool.completed" });
                 break;
               }
               case "assistant.completed": {
                 const content = typeof d.content === "string" ? d.content : "";
                 emit({ ...eventBase(turn.threadId, turnId), type: "item.completed",
                   itemType: "assistant_text", text: content });
-                completed = content.length > 0;
                 break;
               }
               case "run.completed": {
-                const usage = usageOf(d.usage);
-                emit({ ...eventBase(turn.threadId, turnId), type: "turn.completed", ok: true,
-                  stopReason: null, cost: null, usage });
+                settle(true, null, usageOf(d.usage));
                 break readLoop;
               }
               case "run.failed":
@@ -401,8 +465,7 @@ export const HermesServeDriver: ProviderDriver<HermesServeConfig> = {
                 const message = typeof d.error === "string" ? d.error
                   : typeof d.message === "string" ? d.message : JSON.stringify(d).slice(0, 300);
                 emit({ ...eventBase(turn.threadId, turnId), type: "runtime.error", message });
-                emit({ ...eventBase(turn.threadId, turnId), type: "turn.completed", ok: false,
-                  stopReason: "error", cost: null });
+                settle(false, "error");
                 break readLoop;
               }
               case "done":
@@ -412,11 +475,15 @@ export const HermesServeDriver: ProviderDriver<HermesServeConfig> = {
             }
           }
         }
-        if (!completed) {
-          // Stream ended without run.completed (keepalive cut, disconnect).
-          emit({ ...eventBase(turn.threadId, turnId), type: "turn.completed", ok: false,
-            stopReason: "stream-ended", cost: null });
+        // Close any tool step still open before the turn settles, then settle
+        // once. `done` without run.completed and a plain socket close both land
+        // here; if run.completed already arrived, settle() is a no-op and the
+        // chip is not double-signalled.
+        for (const _openTool of openTools) {
+          emit({ ...eventBase(turn.threadId, turnId), type: "item.completed", itemType: "tool", ok: false });
         }
+        openTools.clear();
+        settle(false, "stream-ended");
         appendNative(`hermes:${instanceId}`, { dir: "out", source: "hermes-serve", msg: body });
         appendNative(`hermes:${instanceId}`, { dir: "in", source: "hermes-serve", msg: { session_id: reportedSession, run_id: runId } });
       } catch (error) {
@@ -432,7 +499,15 @@ export const HermesServeDriver: ProviderDriver<HermesServeConfig> = {
       provider: DRIVER_KIND,
       capabilities: {
         sessionModelSwitch: "in-session" as const,
-        queueing: true,
+        // No `queueing` on purpose. The harness reads it as "this engine can
+        // take a message INSIDE its live turn", and with it set a send that
+        // arrives mid-turn was steered into the running Hermes run straight
+        // away — the person's next thought silently amended the current
+        // answer instead of waiting its own turn. Without it the busy branch
+        // holds the message in the composer queue and drains it as one
+        // follow-up after the turn settles. steer() stays available for the
+        // explicit Stop-then-steer action, which is a deliberate choice by
+        // the person rather than a race the send lost.
         effortLevels: HERMES_EFFORT_LEVELS,
       },
       sendTurn,
