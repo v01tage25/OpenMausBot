@@ -147,6 +147,11 @@ export function ProviderMark({ driverKind, size, className }: IconProps & { driv
       return <QwenMark size={size} className={className} />;
     case "hermesAgent":
       return <HermesMark size={size} className={className} />;
+    case "hermesServe":
+      // Same mark as the local Hermes Agent, red so a gateway-backed bot is
+      // distinguishable from a loopback one at a glance. HermesMark fills
+      // from currentColor, so the colour rides the class — no svg edits.
+      return <HermesMark size={size} className={cn("text-[#A83636]", className)} />;
     case "boxAgent":
       return <ComputerMark size={size} className={className} />;
     case "piAgent":

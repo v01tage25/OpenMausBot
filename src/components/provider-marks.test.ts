@@ -26,4 +26,18 @@ describe("provider marks", () => {
       expect({ file, tooLight }).toEqual({ file, tooLight: [] });
     }
   });
+
+  // A gateway-backed Hermes bot (hermesServe) used to fall through to the
+  // first-letter placeholder because only the local hermesAgent case existed,
+  // so the driver looked unbranded in the sidebar. It keeps the same mark but
+  // in the gateway red, which also distinguishes it from the monochrome local one.
+  it("brands hermesServe with the Hermes mark in the gateway red", () => {
+    const source = readFileSync(join(here, "ProviderIcons.tsx"), "utf8");
+    expect(source).toMatch(/case "hermesServe":/);
+    expect(source).toMatch(/case "hermesAgent":/);
+    // The gateway case must carry the red and reuse the shared HermesMark.
+    const serveCase = source.slice(source.indexOf('case "hermesServe":'));
+    expect(serveCase.slice(0, 400)).toMatch(/HermesMark/);
+    expect(serveCase.slice(0, 400)).toMatch(/#[Aa]83636/);
+  });
 });
