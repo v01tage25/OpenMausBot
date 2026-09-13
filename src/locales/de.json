@@ -1389,5 +1389,6 @@
   "taskBoard.empty.cta": "Erste Karte erstellen",
   "taskBoard.empty.sample1": "Wöchentliches Update entwerfen",
   "taskBoard.empty.sample2": "Posteingang aufräumen",
-  "taskBoard.empty.sample3": "Zahlen prüfen"
+  "taskBoard.empty.sample3": "Zahlen prüfen",
+  "taskBoard.back": "Zurück"
 }

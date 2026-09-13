@@ -2157,5 +2157,6 @@
   "taskBoard.empty.cta": "Create your first card",
   "taskBoard.empty.sample1": "Draft the weekly update",
   "taskBoard.empty.sample2": "Tidy the inbox",
-  "taskBoard.empty.sample3": "Check the numbers"
+  "taskBoard.empty.sample3": "Check the numbers",
+  "taskBoard.back": "Back"
 }

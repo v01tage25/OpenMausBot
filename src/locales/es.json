@@ -1389,5 +1389,6 @@
   "taskBoard.empty.cta": "Crear tu primera tarjeta",
   "taskBoard.empty.sample1": "Redactar la actualización semanal",
   "taskBoard.empty.sample2": "Ordenar la bandeja de entrada",
-  "taskBoard.empty.sample3": "Revisar los números"
+  "taskBoard.empty.sample3": "Revisar los números",
+  "taskBoard.back": "Atrás"
 }

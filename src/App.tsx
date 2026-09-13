@@ -80,9 +80,14 @@ function Shell() {
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const previousViewRef = useRef(state.activeView);
   const calendarOriginRef = useRef<"chat" | "team-map" | "task-board">("chat");
+  const boardOriginRef = useRef<"chat" | "team-map" | "task-board" | "routines">("chat");
   const group = state.groups.find((g) => g.id === state.selectedId);
   const bot = group ? undefined : (state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0]);
   const calendarFocus = state.activeView === "routines";
+  /** The board, like Automations, is a place you go to work rather than a
+   * conversation you are in — so it takes the whole window and draws its own
+   * way back instead of leaving a sidebar of chats beside it. */
+  const boardFocus = state.activeView === "task-board";
 
   // Nothing on this machine can run a bot. A missing cloud login does not
   // count — that CLI can still host a local model. Wait for the first
@@ -155,6 +160,12 @@ function Shell() {
     if (state.activeView === "routines" && previousViewRef.current !== "routines") {
       calendarOriginRef.current = previousViewRef.current;
     }
+    // The board can be entered from the same places, so it remembers its own
+    // origin: going back from it must land where the person came from rather
+    // than always in the chat.
+    if (state.activeView === "task-board" && previousViewRef.current !== "task-board") {
+      boardOriginRef.current = previousViewRef.current;
+    }
     previousViewRef.current = state.activeView;
   }, [state.activeView]);
 
@@ -188,6 +199,20 @@ function Shell() {
   const openCalendarRoom = useCallback((id: string) => {
     dispatch({ type: "select", id });
   }, [dispatch]);
+
+  /** Leave the board for wherever it was opened from — the map, the
+   * automations calendar, or a chat. */
+  const closeBoard = useCallback(() => {
+    if (boardOriginRef.current === "team-map") {
+      dispatch({ type: "showTeamMap" });
+      return;
+    }
+    if (boardOriginRef.current === "routines") {
+      dispatch({ type: "showRoutines" });
+      return;
+    }
+    dispatch({ type: "select", id: state.selectedId });
+  }, [dispatch, state.selectedId]);
 
   const nativeViewOverlayOpen =
     drawerOpen ||
@@ -253,7 +278,7 @@ function Shell() {
           className="absolute inset-0 z-30 bg-black/50 md:hidden"
         />
       )}
-      {!calendarFocus && <Sidebar
+      {!(calendarFocus || boardFocus) && <Sidebar
         open={drawerOpen}
         onClose={() => {
           setDrawerOpen(false);
@@ -263,7 +288,7 @@ function Shell() {
       {state.activeView === "team-map" ? (
         <TeamMapPage />
       ) : state.activeView === "task-board" ? (
-        <TaskBoardPage />
+        <TaskBoardPage onBack={closeBoard} />
       ) : state.activeView === "routines" ? (
         <RoutinesPage onBack={closeCalendar} onOpenRoom={openCalendarRoom} />
       ) : !remoteClient && localVmWorkspaceBotId ? (
