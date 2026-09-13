@@ -39,6 +39,24 @@ function Shell() {
     state.bots.filter((bot) => !bot.hidden && bot.unread).length +
     state.groups.filter((group) => group.unread).length;
   const remoteClient = window.ogb?.remoteClient?.active === true;
+  useEffect(() => {
+    if (!window.ogb?.environments) return;
+    const open = (computerId?: string | null) => {
+      if (computerId) {
+        const target = new URL(window.location.href);
+        target.searchParams.set("share-computer", computerId);
+        window.history.replaceState(null, "", `${target.pathname}${target.search}${target.hash}`);
+      }
+      dispatch({ type: "toggleAppSettings", open: true, section: "desktopWorkspaces" });
+    };
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("desktop-settings") === "workspaces") {
+      url.searchParams.delete("desktop-settings");
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      open();
+    }
+    return window.ogb.environments.onOpenSettings?.(open);
+  }, [dispatch]);
   // Mobile-only drawer state. Above md, none of these properties are emitted
   // at all — Sidebar scopes every mobile class with max-md: rather than
   // cancelling them with md:, which would still emit a translate value and
@@ -178,6 +196,14 @@ function Shell() {
     state.inspectorOpen ||
     state.appSettingsOpen ||
     state.pluginsOpen;
+
+  // The macOS app menu's Preferences… item lives in the desktop shell, so the
+  // shell signals the request over the bridge (Cmd+, accelerates the item).
+  // Local-shell only: remote server pages never receive the channel, and ogb
+  // is absent in the browser.
+  useEffect(() => {
+    return window.ogb?.onOpenAppSettings?.(() => dispatch({ type: "toggleAppSettings", open: true }));
+  }, [dispatch]);
 
   // The viewer outlives ComputerPanel and can target any bot, so release control
   // here (always mounted) when a bot's viewer closes. release() is idempotent.
@@ -319,6 +345,9 @@ function WelcomeGate() {
       remoteClient: window.ogb?.remoteClient?.active === true,
       legacyDone: emailGateDone(),
     });
+  // A fresh desktop can connect to an existing hosted workspace without
+  // completing local provider onboarding. Closing Settings resumes the tour.
+  if (state.appSettingsOpen && state.appSettingsSection === "desktopWorkspaces") return null;
   if (!state.welcomeOpen && !due) return null;
   const bot = state.bots.find((b) => !b.hidden) ?? null;
   const replay = state.welcomeOpen && !due;

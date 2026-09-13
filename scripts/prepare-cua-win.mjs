@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { build } from "esbuild";
 
-if (process.platform !== "win32") throw new Error("prepare-cua-win is Windows-only");
+if (process.platform !== "win32" || process.arch !== "x64") throw new Error("prepare-cua-win requires Windows x64");
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const run = promisify(execFile);
@@ -50,7 +50,10 @@ async function officialBinary() {
   await mkdir(cache, { recursive: true });
   const url = `https://github.com/trycua/cua/releases/download/cua-driver-rs-v${release.version}/${release.file}`;
   console.log(`Downloading CUA Driver ${release.version} from the official release…`);
-  const response = await fetch(url, { headers: { "user-agent": "OpenMausBot-packager" } });
+  const response = await fetch(url, {
+    headers: { "user-agent": "OpenMausBot-packager" },
+    signal: AbortSignal.timeout(120_000),
+  });
   if (!response.ok) throw new Error(`CUA Driver download failed: HTTP ${response.status}`);
   const bytes = Buffer.from(await response.arrayBuffer());
   const digest = createHash("sha256").update(bytes).digest("hex");
@@ -59,7 +62,11 @@ async function officialBinary() {
   }
   const archive = join(cache, release.file);
   await writeFile(archive, bytes);
-  await run("powershell", ["-Command", `Expand-Archive -Path "${archive}" -DestinationPath "${cache}"`]);
+  await run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+    "Expand-Archive -LiteralPath $env:OMB_CUA_ARCHIVE -DestinationPath $env:OMB_CUA_EXTRACT"], {
+    env: { ...process.env, OMB_CUA_ARCHIVE: archive, OMB_CUA_EXTRACT: cache },
+    timeout: 60_000,
+  });
   if ((await binaryVersion(cachedBinary)) !== expectedVersion) {
     throw new Error(`downloaded CUA Driver does not report version ${expectedVersion}`);
   }
@@ -90,6 +97,9 @@ if (process.env.CUA_DRIVER_PATH) {
   }
 }
 
+if ((await binaryVersion(binary)) !== expectedVersion) {
+  throw new Error(`CUA executable must match SDK ${expectedVersion}`);
+}
 const details = await stat(binary);
 if (!details.isFile()) {
   throw new Error(`cua-driver is not a file: ${binary}`);

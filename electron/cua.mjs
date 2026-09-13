@@ -15,7 +15,7 @@
 // <userData>/cua-connection.json for the harness server to hand to drivers.
 
 import { app, ipcMain } from "electron";
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
@@ -59,14 +59,6 @@ const WIN_INSTALLED_DRIVERS = [
   path.join(app.getPath("home"), ".cua-driver", "packages", "current", "cua-driver.exe"),
   path.join(app.getPath("home"), "AppData", "Local", "Programs", "CuaDriver", "cua-driver.exe"),
 ];
-// The pipe every cua-driver install listens on by default. It is only ever
-// probed to detect that a foreign daemon exists — never adopted, because on
-// Windows that daemon may belong to another tool or to a user install running
-// a different version. A named pipe is not a filesystem path either:
-// fs.existsSync always reports false for it, so liveness is probed by
-// connecting, never by stat.
-const WIN_SHARED_SOCKET = "\\\\.\\pipe\\cua-driver";
-
 let embeddedHost = null; // EmbeddedCuaDriverHost | null
 let startupAbort = null;
 let lifecycleGeneration = 0;
@@ -149,24 +141,16 @@ export function resolveDriverBinary() {
     if (fs.existsSync(bundled)) return bundled;
   }
   if (process.platform === "darwin" && fs.existsSync(INSTALLED_DRIVER)) return INSTALLED_DRIVER;
-  if (process.platform === "win32") return resolveWindowsDriver();
-  return null;
-}
-
-// The dev-only path that adopts an already-running daemon. Windows never uses
-// it: its shared pipe may belong to a foreign driver, so a private pipe is
-// started instead (see attachStandalone).
-function standaloneSocket() {
-  if (process.platform === "darwin") return STANDALONE_SOCKET;
+  if (process.platform === "win32") {
+    const staged = path.join(app.getAppPath(), "dist-native", "cua-win32-x64", "cua-driver.exe");
+    return fs.existsSync(staged) ? staged : resolveWindowsDriver();
+  }
   return null;
 }
 
 function socketAlive(sockPath) {
   return new Promise((resolve) => {
-    // A Windows named pipe never exists on disk, and a stale unix socket file
-    // can outlive its daemon. Connect first and let the OS answer, so liveness
-    // is never guessed from a path that may be meaningless or stale.
-    if (process.platform !== "win32" && !fs.existsSync(sockPath)) return resolve(false);
+    if (!fs.existsSync(sockPath)) return resolve(false);
     const s = net.createConnection(sockPath);
     let timer;
     const done = (ok) => {
@@ -183,6 +167,7 @@ function socketAlive(sockPath) {
 
 async function loadEmbeddedSdk() {
   if (!app.isPackaged) {
+    if (process.platform === "win32") return import("@trycua/cua-driver/embedded");
     const [embedded, permissions] = await Promise.all([
       import("@trycua/cua-driver/embedded"),
       import("@trycua/cua-driver/electron"),
@@ -200,51 +185,8 @@ async function loadEmbeddedSdk() {
 }
 
 async function attachStandalone(signal) {
-  if (process.platform === "win32") {
-    const driver = resolveWindowsDriver();
-    if (!driver) return null;
-    // Someone else's daemon may already own the default pipe: another agent
-    // tool, a CLI session, or the user's own cua-driver install — possibly on
-    // a different version or permission mode than the one this app ships.
-    // Attaching to it would silently hand computer use to a foreign process,
-    // so this app starts its OWN daemon on a private pipe instead and leaves
-    // the shared one untouched. The pipe name is derived from this process, so
-    // concurrent instances and unrelated drivers never collide.
-    const privatePipe = `//./pipe/openmausbot-cua-${process.pid}`;
-    if (!(await socketAlive(privatePipe))) {
-      // A foreign daemon on the shared pipe is not an error — it is the normal
-      // state on a machine where the user runs cua-driver themselves — but it
-      // is worth saying out loud, so a support log explains why this app has a
-      // second daemon rather than reusing the one already running.
-      if (await socketAlive(WIN_SHARED_SOCKET)) {
-        console.log("[cua] another cua-driver daemon owns the shared pipe; starting a private one");
-      }
-      // `serve` never exits, so launch it detached and let it own its lifetime.
-      // A timeout here would block this handler for its full duration and then
-      // kill the daemon it just started — the probe below reports real failure.
-      const child = spawn(driver, ["serve", "--socket", privatePipe], {
-        detached: true,
-        stdio: "ignore",
-        windowsHide: true,
-        env: { ...process.env, ...CUA_ENV },
-      });
-      child.on("error", () => {});
-      child.unref();
-      for (let i = 0; i < 25; i++) {
-        signal.throwIfAborted();
-        if (await socketAlive(privatePipe)) break;
-        await delay(200, undefined, { signal });
-      }
-    }
-    if (!(await socketAlive(privatePipe))) return null;
-    return {
-      mode: "standalone",
-      socketPath: privatePipe,
-      mcpCommand: driver,
-      mcpArgs: ["mcp", "--socket", privatePipe],
-      mcpEnv: { ...CUA_ENV },
-    };
-  }
+  // Windows must stay on the owned embedded host, never an unrelated daemon.
+  if (process.platform !== "darwin") return null;
   const driver = fs.existsSync(INSTALLED_DRIVER) ? INSTALLED_DRIVER : null;
   if (!driver) return null;
   if (!(await socketAlive(STANDALONE_SOCKET))) {
@@ -283,40 +225,18 @@ async function startEmbedded(binary, signal) {
   // excludes general node_modules, so a bare package import only works in dev.
   const sdk = await loadEmbeddedSdk();
   signal.throwIfAborted();
-  if (process.platform === "win32") {
-    // Windows: no macOS-style TCC prompts. The embedded host will request
-    // necessary permissions (UI Access, etc.) on startup.
-    const host = new sdk.EmbeddedCuaDriverHost(binary, HOST_BUNDLE_ID);
-    try {
-      const conn = await host.start();
-      embeddedHost = host;
-      return {
-        mode: "embedded",
-        socketPath: conn.socketPath,
-        mcpCommand: binary,
-        mcpArgs: ["mcp", "--embedded", "--socket", conn.socketPath],
-        mcpEnv: { ...CUA_ENV, CUA_DRIVER_EMBEDDED: "1", CUA_DRIVER_HOST_BUNDLE_ID: HOST_BUNDLE_ID },
-      };
-    } catch (err) {
-      try {
-        await host.stop();
-      } catch {
-        // startup already failed; stop is best-effort before destroy
-      }
-      host.uniffiDestroy?.();
-      throw err;
-    }
-  }
   // CUA's embedding contract requires grants before the child daemon starts;
   // these SDK calls execute in Electron main so macOS attributes them to
   // OpenMausBot rather than to a terminal or helper process.
-  const permissionStatus = sdk.requestMacOSPermissions();
-  if (!sdk.hasRequiredMacOSPermissions(permissionStatus)) {
-    const missing = [
-      !permissionStatus.accessibility && "Accessibility",
-      !permissionStatus.screenRecording && "Screen Recording",
-    ].filter(Boolean).join(" and ");
-    throw new Error(`${missing || "macOS permissions"} required; grant access in System Settings and restart OpenMausBot`);
+  if (process.platform === "darwin") {
+    const permissionStatus = sdk.requestMacOSPermissions();
+    if (!sdk.hasRequiredMacOSPermissions(permissionStatus)) {
+      const missing = [
+        !permissionStatus.accessibility && "Accessibility",
+        !permissionStatus.screenRecording && "Screen Recording",
+      ].filter(Boolean).join(" and ");
+      throw new Error(`${missing || "macOS permissions"} required; grant access in System Settings and restart OpenMausBot`);
+    }
   }
   const host = new sdk.EmbeddedCuaDriverHost(binary, HOST_BUNDLE_ID);
   try {
@@ -356,7 +276,7 @@ export async function startCua() {
   }
 
   const wantEmbedded =
-    app.isPackaged || process.env.OPENMAUSBOT_CUA_EMBEDDED === "1";
+    process.platform === "win32" || app.isPackaged || process.env.OPENMAUSBOT_CUA_EMBEDDED === "1";
   let nextConnection;
 
   if (wantEmbedded) {
@@ -380,13 +300,13 @@ export async function startCua() {
         };
       }
     }
-  } else if (process.platform === "darwin" && (await socketAlive(standaloneSocket()))) {
+  } else if (process.platform === "darwin" && (await socketAlive(STANDALONE_SOCKET))) {
     // Dev machine with the platform CuaDriver daemon already running. Windows
     // is deliberately excluded: there the shared pipe belongs to whatever
     // driver the user happens to have, so it is never adopted implicitly.
     nextConnection = {
       mode: "standalone",
-      socketPath: standaloneSocket(),
+      socketPath: STANDALONE_SOCKET,
       mcpCommand: binary,
       mcpArgs: ["mcp"],
       mcpEnv: { ...CUA_ENV },

@@ -1,53 +1,104 @@
-// The Windows standalone path must never adopt a foreign daemon.
-//
-// On Windows the default pipe is shared: another agent tool, a CLI session, or
-// the user's own cua-driver install may already own it, possibly on a different
-// version or permission mode. Attaching there would silently hand computer use
-// to a process this app neither owns nor can reason about, so the app starts
-// its own daemon on a private pipe instead. These tests pin that contract.
-import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const source = readFileSync(
-  join(dirname(fileURLToPath(import.meta.url)), "cua.mjs"),
-  "utf8",
-);
+const fixture = vi.hoisted(() => ({ home: "", hosts: [], start: null, handlers: new Map() }));
+vi.mock("electron", () => ({
+  app: { isPackaged: false, getPath: () => fixture.home, getAppPath: () => fixture.home },
+  ipcMain: { handle: (name, handler) => fixture.handlers.set(name, handler) },
+}));
+vi.mock("@trycua/cua-driver/embedded", () => ({
+  EmbeddedCuaDriverHost: class {
+    constructor(binary, bundleId) { this.binary = binary; this.bundleId = bundleId; fixture.hosts.push(this); }
+    start(options) { return fixture.start(options); }
+    stop = vi.fn(async () => {});
+    uniffiDestroy = vi.fn();
+  },
+}));
+// Neither macOS permission imports nor ad-hoc daemon launches belong on Windows.
+vi.mock("@trycua/cua-driver/electron", () => { throw new Error("macOS permissions loaded on Windows"); });
+vi.mock("node:child_process", () => ({ execFile: vi.fn(() => { throw new Error("unowned launch"); }) }));
+vi.mock("node:net", () => ({ default: { createConnection: vi.fn(() => { throw new Error("foreign pipe probed"); }) } }));
 
-describe("Windows local-control isolation", () => {
-  it("starts its own daemon on a per-process private pipe", () => {
-    expect(source).toContain("//./pipe/openmausbot-cua-${process.pid}");
+let cua;
+const connection = { socketPath: "\\\\.\\pipe\\fixture-owned-cua" };
+beforeEach(async () => {
+  fixture.home = mkdtempSync(join(tmpdir(), "omb-cua-win-"));
+  fixture.hosts = [];
+  fixture.handlers.clear();
+  fixture.start = vi.fn(async () => connection);
+  vi.stubGlobal("process", new Proxy(process, {
+    get(target, key) { return key === "platform" ? "win32" : Reflect.get(target, key); },
+  }));
+  vi.stubEnv("CUA_DRIVER_PATH", join(fixture.home, "cua-driver.exe"));
+  vi.stubEnv("OPENMAUSBOT_CUA_EMBEDDED", "");
+  vi.resetModules();
+  cua = await import("./cua.mjs");
+});
+afterEach(async () => {
+  await cua?.stopCua();
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+  rmSync(fixture.home, { recursive: true, force: true });
+});
+
+describe("Windows owned CUA host", () => {
+  it("uses embedded control even in dev, without a shared pipe or macOS permissions", async () => {
+    await expect(cua.startCua()).resolves.toMatchObject({
+      mode: "embedded", ...connection,
+      mcpArgs: ["mcp", "--embedded", "--socket", connection.socketPath],
+      mcpEnv: { CUA_DRIVER_EMBEDDED: "1", CUA_DRIVER_RS_TELEMETRY_ENABLED: "0" },
+    });
+    expect(fixture.start.mock.calls[0][0].signal).toBeInstanceOf(AbortSignal);
+    expect(fixture.hosts[0].binary).toBe(process.env.CUA_DRIVER_PATH);
+    await cua.stopCua();
+    expect(fixture.hosts[0].stop).toHaveBeenCalledOnce();
+    expect(fixture.hosts[0].uniffiDestroy).toHaveBeenCalledOnce();
   });
 
-  it("passes that private pipe to both the daemon and the MCP proxy", () => {
-    // The daemon must listen on the pipe the proxy will later connect to.
-    expect(source).toContain('["serve", "--socket", privatePipe]');
-    expect(source).toContain('["mcp", "--socket", privatePipe]');
+  it("reports a failed host instead of launching or attaching to an unowned daemon", async () => {
+    fixture.start.mockRejectedValue(new Error("fixture start failed"));
+    await expect(cua.startCua()).resolves.toMatchObject({
+      mode: "unavailable", reason: "embedded host failed: fixture start failed",
+    });
+    expect(fixture.hosts[0].stop).toHaveBeenCalledOnce();
+    expect(fixture.hosts[0].uniffiDestroy).toHaveBeenCalledOnce();
   });
 
-  it("does not adopt the shared pipe on Windows", () => {
-    // The shared pipe may be probed (so logs explain why a second daemon
-    // exists), but it must never be handed to the MCP proxy as its endpoint.
-    expect(source).not.toMatch(/socketPath:\s*WIN_SHARED_SOCKET/);
-    const standalone = source.slice(
-      source.indexOf("async function attachStandalone"),
-      source.indexOf("export async function startCua"),
-    );
-    expect(standalone).toContain("WIN_SHARED_SOCKET");
-    expect(standalone).toContain("another cua-driver daemon owns the shared pipe");
+  it("cancels a stalled start when the desktop stops", async () => {
+    fixture.start.mockImplementation(({ signal }) => new Promise((_, reject) => {
+      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+    }));
+    const started = cua.startCua();
+    const rejected = expect(started).rejects.toMatchObject({ name: "AbortError" });
+    await expect.poll(() => fixture.hosts.length).toBe(1);
+    await cua.stopCua();
+    await rejected;
+    expect(fixture.hosts[0].stop).toHaveBeenCalledOnce();
+    expect(fixture.hosts[0].uniffiDestroy).toHaveBeenCalledOnce();
   });
 
-  it("keeps the macOS dev path separate from the Windows one", () => {
-    const devBranch = source.slice(source.indexOf("} else if (process.platform"));
-    expect(devBranch).toContain('process.platform === "darwin"');
+  it("discards late startup without replacing or stopping the new host", async () => {
+    let finish;
+    fixture.start.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    const first = cua.startCua();
+    const rejected = expect(first).rejects.toMatchObject({ name: "AbortError" });
+    await expect.poll(() => fixture.hosts.length).toBe(1);
+    await cua.stopCua();
+    await cua.startCua();
+    finish({ socketPath: "stale-pipe" });
+    await rejected;
+    expect(fixture.hosts[0].stop).toHaveBeenCalledOnce();
+    expect(fixture.hosts[1].stop).not.toHaveBeenCalled();
+    expect(JSON.parse(readFileSync(join(fixture.home, "cua-connection.json"), "utf8")).socketPath).toBe(connection.socketPath);
   });
 
-  it("probes pipe liveness by connecting, not by stat", () => {
-    // fs.existsSync is always false for a named pipe, so a stat-first check
-    // would report a healthy daemon as missing.
-    const probe = source.slice(source.indexOf("function socketAlive"));
-    expect(probe).toContain('process.platform !== "win32"');
-    expect(probe).toContain("net.createConnection");
+  it("resolves the staged development executable without installing a foreign driver", () => {
+    vi.stubEnv("CUA_DRIVER_PATH", "");
+    const stage = join(fixture.home, "dist-native", "cua-win32-x64");
+    mkdirSync(stage, { recursive: true });
+    writeFileSync(join(stage, "cua-driver.exe"), "inert fixture");
+    expect(cua.resolveDriverBinary()).toBe(join(stage, "cua-driver.exe"));
   });
 });

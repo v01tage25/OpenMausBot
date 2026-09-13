@@ -308,6 +308,7 @@ beforeAll(async () => {
       OMB_COMMS_TOKEN: TOKEN,
       OMB_TURN_DEPTH: "0",
       OMB_SKILL_AUTHORING_ENABLED: "1",
+      OMB_SHARED_COMPUTERS_ENABLED: "1",
     },
     stdio: ["pipe", "pipe", "inherit"],
   });
@@ -337,6 +338,8 @@ describe("agents-proxy MCP surface", () => {
     expect(init.result.serverInfo.name).toContain("agents");
     const list = await rpc("tools/list");
     expect(list.result.tools.map((t: { name: string }) => t.name)).toEqual([
+      "list_shared_computers",
+      "shared_computer",
       "list_bots",
       "list_rooms",
       "ask_bot",
@@ -348,6 +351,9 @@ describe("agents-proxy MCP surface", () => {
       "start_thread",
       "post_to_room",
       "create_bot",
+      "list_team_setup",
+      "propose_team_setup",
+      "propose_bot_deletion",
       "create_room",
       "manage_room",
       "request_credential",
@@ -378,7 +384,9 @@ describe("agents-proxy MCP surface", () => {
   it("advertises read annotations only for the reviewed built-in reads", async () => {
     const list = await rpc("tools/list");
     const readNames = [
+      "list_shared_computers",
       "list_bots", "list_rooms", "check_delegation", "wait_delegation", "list_threads",
+      "list_team_setup",
       "session_search", "session_read", "list_routines", "skills_list",
     ];
     expect(list.result.tools.filter((tool: any) => tool.annotations?.readOnlyHint)
@@ -411,7 +419,11 @@ describe("agents-proxy MCP surface", () => {
     expect(JSON.stringify(create.inputSchema)).not.toMatch(/"oneOf"|"anyOf"|"allOf"|"const"/);
     expect(schedule.type).toBe("object");
     expect(schedule.required).toEqual(["type"]);
-    expect(schedule.properties.type.enum).toEqual(["once", "weekly", "daily", "interval"]);
+    expect(schedule.properties.type.enum).toEqual(["once", "weekly", "daily", "interval", "cron"]);
+    expect(schedule.properties.expression.description).toContain("0 9 L * *");
+    expect(schedule.properties.expression.description).toContain("MON#2");
+    expect(schedule.properties.timeZone.description).toContain("IANA");
+    expect(create.description).toContain("Never approximate unsupported requests");
     expect(schedule.properties.weekdays.items.enum).toEqual([
       "monday",
       "tuesday",
@@ -1183,6 +1195,36 @@ describe("agents-proxy MCP surface", () => {
     });
   });
 
+  it("normalizes cron proposals and updates without losing the explicit zone", async () => {
+    const schedule = { type: "cron", expression: "0 9 1 * *", timeZone: "America/New_York" };
+    const result = await callTool("propose_routine", {
+      name: "Monthly report", instructions: "Summarize the previous month.",
+      schedule: JSON.stringify({ ...schedule, expression: "  0 9  1 * *  " }),
+    });
+    expect(result.result.isError).toBeFalsy();
+    expect(lastRoutineRequestBody.routine.schedule).toEqual(schedule);
+    const update = await callTool("propose_routine_action", {
+      action: "update", routine_id: "routine-1", changes: { schedule: { ...schedule, expression: "0 9 L * *" } },
+    });
+    expect(update.result.isError).toBeFalsy();
+    expect(lastRoutineRequestBody.changes.schedule).toEqual({ ...schedule, expression: "0 9 L * *" });
+  });
+
+  it.each([
+    { expression: "0 9 1 * *" },
+    { expression: "0 9 1 * *", timeZone: "EST" },
+    { expression: "0 9 1 * *", timeZone: "Fake/Zone" },
+    { expression: "0 0 9 1 * *", timeZone: "UTC" },
+    { expression: "@monthly", timeZone: "UTC" },
+    { expression: "0 9 31 2 *", timeZone: "UTC" },
+    { expression: "0 9 1 * *", timeZone: "UTC", weekdays: ["monday"] },
+  ])("rejects unsafe cron input before calling the harness: %j", async (schedule) => {
+    lastRoutineRequestBody = null;
+    const result = await callTool("propose_routine", { name: "Bad cron", instructions: "Do not run.", schedule: { type: "cron", ...schedule } });
+    expect(result.result.isError).toBe(true);
+    expect(lastRoutineRequestBody).toBeNull();
+  });
+
   it.each([
     { window: { from: "09:00", to: "17:00" } },
     { window: "09:00-17:00" },
@@ -1448,5 +1490,73 @@ describe("agents-proxy MCP surface", () => {
     expect(missingTarget.result.isError).toBe(true);
     expect(missingTarget.result.content[0].text).toContain("needs skill_name");
     expect(lastSkillStageBody).toBeNull();
+  });
+});
+
+// Opt-in computer sharing is off unless the harness turns it on. A separate
+// child is the only honest check: the tool list is frozen at module load.
+describe("with computer sharing off (the default)", () => {
+  let gated: ChildProcess;
+  const gatedPending = new Map<number, (msg: any) => void>();
+  let gatedId = 500;
+  const gatedRpc = (method: string, params?: unknown): Promise<any> =>
+    new Promise((resolve, reject) => {
+      const id = gatedId++;
+      gatedPending.set(id, resolve);
+      gated.stdin!.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+      setTimeout(() => {
+        if (gatedPending.delete(id)) reject(new Error(`${method} timed out`));
+      }, 10_000).unref?.();
+    });
+
+  beforeAll(async () => {
+    gated = spawn(process.execPath, [PROXY], {
+      env: {
+        ...process.env,
+        OMB_HARNESS_URL: `http://127.0.0.1:${stubPort}`,
+        OMB_BOT_ID: "bot-asker",
+        OMB_THREAD_ID: "thread-asker-routine",
+        OMB_COMMS_TOKEN: TOKEN,
+        OMB_TURN_DEPTH: "0",
+        OMB_SKILL_AUTHORING_ENABLED: "1",
+        // deliberately no OMB_SHARED_COMPUTERS_ENABLED
+      },
+      stdio: ["pipe", "pipe", "inherit"],
+    });
+    let buf = "";
+    gated.stdout!.on("data", (c) => {
+      buf += c;
+      let nl;
+      while ((nl = buf.indexOf("\n")) !== -1) {
+        const line = buf.slice(0, nl);
+        buf = buf.slice(nl + 1);
+        if (!line.trim()) continue;
+        const msg = JSON.parse(line);
+        gatedPending.get(msg.id)?.(msg);
+        gatedPending.delete(msg.id);
+      }
+    });
+    await gatedRpc("initialize", { protocolVersion: "2024-11-05" });
+  });
+
+  afterAll(() => {
+    gated?.kill();
+  });
+
+  it("does not advertise the shared-computer tools at all", async () => {
+    const list = await gatedRpc("tools/list");
+    const names = list.result.tools.map((tool: { name: string }) => tool.name);
+    expect(names).not.toContain("list_shared_computers");
+    expect(names).not.toContain("shared_computer");
+    // the rest of the surface is untouched — this is a gate, not a removal
+    expect(names).toContain("list_bots");
+    expect(names).toContain("skills_list");
+  });
+
+  it("refuses the handlers if a model calls them by name anyway", async () => {
+    for (const name of ["list_shared_computers", "shared_computer"]) {
+      const refused = await gatedRpc("tools/call", { name, arguments: { computer_id: "x", action: "list_files" } });
+      expect(refused.error?.message ?? refused.result?.content?.[0]?.text).toMatch(/unknown tool|turned off/i);
+    }
   });
 });

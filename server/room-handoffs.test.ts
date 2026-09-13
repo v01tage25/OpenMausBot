@@ -16,6 +16,39 @@ async function fixture(test: (engine: RoomHandoffs, hooks: RoomHandoffHooks, fil
 const flush = () => new Promise<void>(resolve => setImmediate(resolve));
 
 describe("addressed room request tree", () => {
+  it("treats group-less tasks as bounded work, deduplicates pinned threads and rejects direct or mixed cycles", () => fixture(engine => {
+    const source = { botId: "clive", threadId: "clive-chat" };
+    const target = { botId: "lead", threadId: "lead-task" };
+    const first = engine.enqueue(source, "turn", undefined, target, "build", "Build CSV").node;
+    expect(first.kind).toBe("work");
+    expect(engine.enqueue(source, "turn", undefined, { ...target, threadId: "changed" }, "build", "Build CSV").node.threadId).toBe("lead-task");
+    expect(engine.nodes.size).toBe(2);
+    expect(() => engine.enqueue(source, "turn", undefined, target, "build", "Changed work")).toThrow("different work");
+    first.status = "running";
+    expect(() => engine.enqueue(first, "unused", first.id, { ...source, threadId: "new-chat" }, "cycle", "repeat")).toThrow("ancestor");
+    expect(() => engine.enqueue(first, "unused", first.id, { ...source, groupId: "room", threadId: "room-chat" }, "mixed", "repeat")).toThrow("ancestor");
+    let parent = first;
+    for (let depth = 2; depth <= ROOM_HANDOFF_LIMITS.depth; depth++) {
+      parent.status = "running";
+      parent = engine.enqueue(parent, "unused", parent.id, { botId: `bot-${depth}`, threadId: `task-${depth}` }, "next", "do work").node;
+    }
+    parent.status = "running";
+    expect(() => engine.enqueue(parent, "unused", parent.id, { botId: "too-deep", threadId: "too-deep" }, "next", "do work")).toThrow("depth limit");
+  }));
+  it("cancels only the selected direct tree and records interruption without replay on restart", () => fixture((engine, hooks, file) => {
+    const one = { botId: "clive", threadId: "one" };
+    const two = { botId: "clive", threadId: "two" };
+    engine.enqueue(one, "first", undefined, { botId: "lead", threadId: "lead-one" }, "work", "build");
+    const other = engine.enqueue(two, "second", undefined, { botId: "lead", threadId: "lead-two" }, "work", "build").node;
+    engine.cancelDirect("one");
+    expect(engine.activeDirect("one")).toBe(false);
+    expect(engine.activeDirect("two")).toBe(true);
+    expect(other.status).toBe("queued");
+    const restarted = new RoomHandoffs(file, hooks); restarted.tick();
+    expect(restarted.nodes.get(other.id)?.status).toBe("failed");
+    expect(restarted.nodes.get(other.id)?.result).toContain("restart");
+    expect(hooks.run).not.toHaveBeenCalled();
+  }));
   it("publishes only changed groups, including their final idle and cancelled states", () => fixture(async (engine, hooks) => {
     const updates: Array<{ id: string; active: boolean }[]> = [];
     hooks.changed = ids => updates.push([...ids].map(id => ({ id, active: [...engine.nodes.values()]
@@ -100,7 +133,7 @@ describe("addressed room request tree", () => {
     const delivered: string[] = [];
     let finishSlow!: (result: { ok: boolean; text: string }) => void;
     const resumed: string[][] = [];
-    hooks.report = child => { delivered.push(child.groupId); };
+    hooks.report = child => { delivered.push(child.groupId!); };
     hooks.run = async (node, resume) => {
       if (resume) resumed.push([...delivered]);
       if (node.groupId === "C") return new Promise(resolve => { finishSlow = resolve; });

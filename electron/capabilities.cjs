@@ -60,11 +60,9 @@ function localComputerReady(platform, connection) {
   if (platform === "darwin") {
     return connection?.mode === "embedded" || connection?.mode === "standalone";
   }
-  // Windows reaches the driver over its own named pipe instead of a signed
-  // bundle, so readiness is the same question as on macOS: did Electron end
-  // up with a usable connection to the daemon?
+  // Windows only exposes the host-owned embedded connection.
   if (platform === "win32") {
-    return connection?.mode === "embedded" || connection?.mode === "standalone";
+    return connection?.mode === "embedded";
   }
   if (
     platform !== "linux" ||

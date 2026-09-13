@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import process from "node:process";
+import { setTimeout as delay } from "node:timers/promises";
 
 if (process.platform !== "win32") {
   console.error("smoke-cua-win-embedded is Windows-only");
@@ -34,6 +35,11 @@ if (!bundledSource.includes("OPENMAUSBOT_CUA_SDK_LIBRARY")) {
 }
 
 process.env.OPENMAUSBOT_CUA_SDK_LIBRARY = dll;
+process.env.CUA_DRIVER_RS_TELEMETRY_ENABLED = "0";
+const watchdog = setTimeout(() => {
+  console.error("smoke:cua-win timed out");
+  process.exit(1); // Closing the host also closes the daemon's parent-liveness pipe.
+}, 30_000);
 
 const sdk = await import(pathToFileURL(bundle).href);
 if (typeof sdk.EmbeddedCuaDriverHost !== "function") {
@@ -43,7 +49,7 @@ if (typeof sdk.EmbeddedCuaDriverHost !== "function") {
 
 const host = new sdk.EmbeddedCuaDriverHost(binary, "com.openmausbot.app");
 try {
-  const conn = await host.start();
+  const conn = await host.start({ signal: AbortSignal.timeout(15_000) });
   if (!conn?.socketPath) throw new Error("embedded host reported no socketPath");
   console.log("embedded host started:", {
     pid: conn.pid,
@@ -53,6 +59,14 @@ try {
   });
   await host.stop();
   host.uniffiDestroy?.();
+  if (!Number.isInteger(conn.pid) || conn.pid <= 0) throw new Error("missing daemon PID");
+  const running = () => {
+    try { process.kill(conn.pid, 0); return true; }
+    catch (error) { if (error.code === "ESRCH") return false; throw error; }
+  };
+  for (let attempt = 0; attempt < 50 && running(); attempt++) await delay(100);
+  if (running()) throw new Error("owned daemon survived host.stop()");
+  clearTimeout(watchdog);
   console.log("smoke:cua-win OK — staged bundle drives a real embedded host");
 } catch (err) {
   try {

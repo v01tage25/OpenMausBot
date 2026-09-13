@@ -56,7 +56,7 @@ export function localComputerDisabledReason({
     return "Local computer control requires the desktop app.";
   }
   if (capabilities.host.platform === "win32") {
-    return "Windows local control needs the Cua Driver running. Install or start it, then retry from this panel.";
+    return "The bundled Cua Driver could not start. Restart OpenMausBot and check Diagnostics if it still fails.";
   }
   return "CUA Driver is not ready for local computer control.";
 }
@@ -67,6 +67,7 @@ export function linuxAutoDescription(): string {
 
 export type BoxPanelAction =
   | "ensure-box"
+  | "team-box"
   | "show-ready-box"
   | "show-sleeping-box"
   | "show-pending-box"
@@ -88,13 +89,18 @@ export function resolveBoxPanelAction({
   boxState,
   canUseCloud,
   autoLocal,
+  teamComputer = false,
 }: {
   computer: Bot["computer"];
   configured: boolean;
   boxState: string | null;
   canUseCloud: boolean;
   autoLocal: boolean;
+  teamComputer?: boolean;
 }): BoxPanelAction {
+  // A team's explicit grant wins over Auto's private-Box/local fallback.
+  // This panel reports it; paid lifecycle and shared access stay in Team map.
+  if (computer === undefined && teamComputer) return "team-box";
   const explicitCloud = computer === "cloud";
 
   if (!configured) {

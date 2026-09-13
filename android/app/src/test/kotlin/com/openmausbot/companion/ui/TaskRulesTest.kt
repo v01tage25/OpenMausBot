@@ -67,12 +67,12 @@ class TaskRulesTest {
     }
 
     @Test
-    fun `a busy bot refuses create, delete and switch`() {
+    fun `a busy legacy bot refuses mutations but permits local navigation`() {
         val tasks = listOf(task("t1"), task("t2"))
         val busy = bot(tasks, current = "t1", busy = true)
         assertFalse(TaskRules.canCreate(busy))
         assertFalse(TaskRules.canDelete(task("t2"), busy))
-        assertFalse(TaskRules.canSwitch(task("t2"), busy))
+        assertTrue(TaskRules.canSwitch(task("t2"), busy))
     }
 
     @Test
@@ -124,8 +124,10 @@ class TaskRulesTest {
     }
 
     @Test
-    fun `a bot with no task list reports none`() {
-        assertEquals(emptyList(), TaskRules.tasks(bot(id = "bot-1")))
+    fun `a legacy bot keeps its current thread but an empty catalog stays empty`() {
+        val legacy = bot(id = "bot-1")
+        assertEquals(listOf(legacy.threadId), TaskRules.tasks(legacy).map { it.threadId })
+        assertEquals(emptyList(), TaskRules.tasks(legacy.copy(tasks = emptyList())))
     }
 
     @Test
@@ -139,7 +141,7 @@ class TaskRulesTest {
         assertEquals(listOf(legacy, results), TaskRules.tasks(Chat.BotChat(subject)))
         assertEquals(3, subject.tasks?.size)
         assertTrue(TaskRules.canCreate(subject))
-        assertTrue(TaskRules.canSwitch(execution, subject))
+        assertFalse(TaskRules.canSwitch(execution, subject))
         assertFalse(TaskRules.canDelete(results, subject.copy(tasks = listOf(results, execution))))
 
         // The wire type is shared, but routine execution markers are bot-only.
