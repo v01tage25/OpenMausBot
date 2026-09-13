@@ -19,6 +19,7 @@ import {
   orderBetween,
   placeIn,
   runAvailability,
+  runIsLive,
   statusTone,
   stopAvailability,
   teamOptions,
@@ -340,20 +341,36 @@ describe("elapsedLabel", () => {
   const format = (ms: number) => `${Math.round(ms / 1_000)}s`;
 
   it("counts from the start while the work is running", () => {
-    const running = owned("Alpha", { status: "in_progress", startedAt: 1_000, updatedAt: 9_000 });
+    const running = owned("Alpha", { status: "in_progress", startedAt: 1_000, finishedAt: undefined });
     expect(elapsedLabel(running, 6_000, format)).toBe("5s");
   });
 
-  it("shows when the card last changed once it is settled", () => {
-    expect(elapsedLabel(card({ status: "todo", updatedAt: 4_000 }), 6_000, format)).toBe("2s");
+  it("stops counting once the run has finished", () => {
+    // This is the bug the fix is for: the clock used to keep ticking after
+    // the bot stopped, because a settled card still carried `startedAt`.
+    const settled = owned("Alpha", { status: "blocked", startedAt: 1_000, finishedAt: 4_000 });
+    expect(elapsedLabel(settled, 60_000, format)).toBe("3s");
+    expect(elapsedLabel(settled, 600_000, format)).toBe("3s");
   });
 
-  it("shows nothing for finished work", () => {
-    // A completed card's age is not a fact anyone acts on.
+  it("shows nothing for a card that never ran", () => {
+    // It used to fall back to "time since the card last changed" and format
+    // that as if it were elapsed work, which read as a duration that meant
+    // nothing. No run means no time.
+    expect(elapsedLabel(card({ status: "todo", updatedAt: 4_000 }), 6_000, format)).toBeNull();
     expect(elapsedLabel(card({ status: "done", updatedAt: 1_000 }), 6_000, format)).toBeNull();
   });
 
-  it("never reports a negative age", () => {
-    expect(elapsedLabel(card({ status: "todo", updatedAt: 9_000 }), 1_000, format)).toBe("0s");
+  it("never reports a negative duration", () => {
+    const running = owned("Alpha", { status: "in_progress", startedAt: 9_000, finishedAt: undefined });
+    expect(elapsedLabel(running, 1_000, format)).toBe("0s");
+  });
+});
+
+describe("runIsLive", () => {
+  it("is true only while a run is going", () => {
+    expect(runIsLive(owned("Alpha", { startedAt: 1_000, finishedAt: undefined }))).toBe(true);
+    expect(runIsLive(owned("Alpha", { startedAt: 1_000, finishedAt: 4_000 }))).toBe(false);
+    expect(runIsLive(card({ status: "todo" }))).toBe(false);
   });
 });

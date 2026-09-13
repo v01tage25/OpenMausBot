@@ -42,6 +42,9 @@ export interface BoardCard {
   createdAt: number;
   updatedAt: number;
   startedAt?: number;
+  /** When the last run finished. Absent while a run is going, so the card can
+   * tell "still counting" from "took this long" without guessing. */
+  finishedAt?: number;
   lastError?: string;
   /** The server found an unanswered ask on this card's thread: the bot asked
    * something and is stopped until a person answers it. */
@@ -217,12 +220,28 @@ export function teamOptions(cards: BoardCard[]): Array<{ key: string; label: str
   return [{ key: "", label: t("taskBoard.team.general"), count: counts.get("") ?? 0 }, ...named];
 }
 
-/** Time a card has been running, or how long ago it settled. Kept as a plain
- * phrase so the card never has to reason about durations itself. */
+/** How long the card's run took, or has been running for so far.
+ *
+ * Two real bugs lived in the previous version. It kept counting after the
+ * turn ended, because a settled card still carried `startedAt`; and when
+ * there was no run at all it fell back to "time since the card last changed"
+ * and formatted that as if it were elapsed work, so a card nobody had started
+ * showed a duration that meant nothing.
+ *
+ * So: a live run counts up from its start; a finished run reports the length
+ * it took and stops; a card with no run shows nothing rather than a number
+ * that would be read as one. `format` is passed in for testability. */
 export function elapsedLabel(card: BoardCard, now: number, format: (ms: number) => string): string | null {
-  if (card.startedAt && (card.status === "in_progress" || card.agent?.busy)) {
-    return format(Math.max(0, now - card.startedAt));
-  }
-  if (card.status === "done" || card.status === "cancelled") return null;
-  return format(Math.max(0, now - card.updatedAt));
+  if (!card.startedAt) return null;
+  // `finishedAt` is what makes the clock stop; without it the run is still
+  // going and `now` is as far as it has got.
+  const end = card.finishedAt ?? now;
+  return format(Math.max(0, end - card.startedAt));
+}
+
+/** Whether the card's own run is still going, which is what decides between a
+ * counted-up time and a fixed duration. Kept beside `elapsedLabel` so the two
+ * cannot disagree about which one is being shown. */
+export function runIsLive(card: BoardCard): boolean {
+  return typeof card.startedAt === "number" && card.finishedAt === undefined;
 }
