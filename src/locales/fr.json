@@ -1389,5 +1389,6 @@
   "taskBoard.empty.cta": "Créer votre première carte",
   "taskBoard.empty.sample1": "Rédiger la mise à jour hebdomadaire",
   "taskBoard.empty.sample2": "Ranger la boîte de réception",
-  "taskBoard.empty.sample3": "Vérifier les chiffres"
+  "taskBoard.empty.sample3": "Vérifier les chiffres",
+  "taskBoard.back": "Retour"
 }

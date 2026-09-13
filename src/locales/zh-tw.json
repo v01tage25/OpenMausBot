@@ -1940,5 +1940,6 @@
   "taskBoard.empty.cta": "建立第一張卡片",
   "taskBoard.empty.sample1": "撰寫每週更新",
   "taskBoard.empty.sample2": "整理收件匣",
-  "taskBoard.empty.sample3": "核對數字"
+  "taskBoard.empty.sample3": "核對數字",
+  "taskBoard.back": "返回"
 }

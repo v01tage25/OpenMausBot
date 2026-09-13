@@ -1395,5 +1395,6 @@
   "taskBoard.empty.cta": "Criar seu primeiro cartão",
   "taskBoard.empty.sample1": "Redigir a atualização semanal",
   "taskBoard.empty.sample2": "Organizar a caixa de entrada",
-  "taskBoard.empty.sample3": "Conferir os números"
+  "taskBoard.empty.sample3": "Conferir os números",
+  "taskBoard.back": "Voltar"
 }
