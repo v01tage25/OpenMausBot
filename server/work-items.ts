@@ -67,6 +67,10 @@ export interface WorkItem {
   updatedAt: number;
   /** When the last start was dispatched, so a card can show elapsed time. */
   startedAt?: number;
+  /** When that start finished. Set together with clearing `startedAt`, so the
+   * card can show how long the run TOOK rather than counting up forever.
+   * Absent while the run is still going. */
+  finishedAt?: number;
   /** Why the last start failed. Kept on the item so a failure is visible on
    * the board and not only in a transcript nobody is looking at. */
   lastError?: string;
@@ -225,6 +229,7 @@ export class WorkItems {
           createdAt,
           updatedAt: typeof item.updatedAt === "number" ? item.updatedAt : createdAt,
           ...(typeof item.startedAt === "number" ? { startedAt: item.startedAt } : {}),
+          ...(typeof item.finishedAt === "number" ? { finishedAt: item.finishedAt } : {}),
           ...(typeof item.lastError === "string" && item.lastError ? { lastError: scrub(item.lastError.slice(0, 2_000)) } : {}),
         }];
       });
@@ -323,8 +328,16 @@ export class WorkItems {
     }
     if (patch.status !== undefined) {
       next.status = patch.status;
-      if (TERMINAL.has(patch.status)) next.startedAt = undefined;
-      else if (patch.status === "in_progress") next.startedAt = next.startedAt ?? this.now();
+      // Moving a card by hand ends any run-clock it was showing: the two
+      // timestamps describe one run and must never survive into another.
+      if (TERMINAL.has(patch.status)) {
+        next.startedAt = undefined;
+      } else if (patch.status === "in_progress") {
+        next.startedAt = next.startedAt ?? this.now();
+      } else {
+        next.startedAt = undefined;
+        next.finishedAt = undefined;
+      }
     }
     if (patch.order !== undefined) next.order = cleanOrder(patch.order);
     if (patch.approvalMode !== undefined) {
@@ -339,6 +352,7 @@ export class WorkItems {
         next.ownerBotId = owner;
         next.threadId = undefined;
         next.startedAt = undefined;
+        next.finishedAt = undefined;
       }
     }
     if (patch.artifacts !== undefined) next.artifacts = cleanArtifacts(patch.artifacts);
@@ -371,6 +385,9 @@ export class WorkItems {
       ...item,
       threadId,
       startedAt: at,
+      // A new run starts a new clock: leaving the previous finish time would
+      // make a card that was restarted show the length of the run BEFORE it.
+      finishedAt: undefined,
       updatedAt: at,
       lastError: undefined,
       // Restarting a blocked card clears the block: it is running again, so
@@ -449,6 +466,43 @@ export class WorkItems {
       lastError: scrub(reason).slice(0, 2_000),
       updatedAt: this.now(),
     };
+    this.items = this.items.map((candidate) => (candidate.id === id ? next : candidate));
+    this.save();
+    return next;
+  }
+
+  /** The card's own turn finished — reconcile the card with what happened.
+   *
+   * `attachThread` marks a card in_progress when its run is dispatched, and
+   * that was the only transition: a bot that then failed mid-turn left the
+   * card in_progress forever, because `fail` is reached only when the
+   * DISPATCH throws, not when the turn it started goes wrong. A card that
+   * looks like it is still working after the bot has stopped is worse than a
+   * card that admits it failed, so the turn's own outcome closes it.
+   *
+   * Only a card that is actually mid-run is settled. A card a person moved to
+   * done, cancelled or blocked by hand is their decision, and a late
+   * completion must not overwrite it — the same rule the routine projection
+   * follows. */
+  settle(id: string, outcome: { ok: boolean; reason?: string | null }): WorkItem | null {
+    const item = this.get(id);
+    if (!item) return null;
+    if (item.status !== "in_progress") return item;
+
+    const at = this.now();
+    // A successful turn stops the clock but does NOT claim the work is
+    // finished: only a person knows whether the job is done, and the board
+    // already has a Done column for them to say so.
+    const next: WorkItem = outcome.ok
+      ? { ...item, startedAt: undefined, finishedAt: at, lastError: undefined, updatedAt: at }
+      : {
+        ...item,
+        status: "blocked",
+        startedAt: undefined,
+        finishedAt: at,
+        lastError: scrub(outcome.reason?.trim() || "The bot stopped without finishing this card").slice(0, 2_000),
+        updatedAt: at,
+      };
     this.items = this.items.map((candidate) => (candidate.id === id ? next : candidate));
     this.save();
     return next;
