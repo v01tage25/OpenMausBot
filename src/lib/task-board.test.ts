@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   WORK_COLUMNS,
+  cardMark,
   cardSection,
   cardStatusLabel,
   columnsOf,
@@ -263,6 +264,24 @@ describe("cardStatusLabel", () => {
     expect(cardStatusLabel(working)).not.toBe(cardStatusLabel(owned("Alpha", { status: "todo" })));
   });
 
+  it("says a card is waiting when its bot asked something", () => {
+    // Only the server can see the transcript, so `waiting` arrives as a fact
+    // rather than being guessed from `busy` — and it must read differently
+    // from both a plain card and a working one.
+    const waiting = owned("Alpha", { waiting: true, status: "in_progress" });
+    expect(cardStatusLabel(waiting)).not.toBe(cardStatusLabel(owned("Alpha", { status: "in_progress" })));
+    expect(cardStatusLabel(waiting)).not.toBe(
+      cardStatusLabel(owned("Alpha", { status: "in_progress", agent: { id: "bot-1", name: "W", busy: true } })),
+    );
+  });
+
+  it("lets a failure outrank a question", () => {
+    // A card that stopped and said why tells the person more than one that
+    // is merely waiting, so the failure keeps the card's headline.
+    const both = owned("Alpha", { lastError: "boom", waiting: true });
+    expect(cardStatusLabel(both)).toBe(cardStatusLabel(card({ lastError: "boom" })));
+  });
+
   it("reads each column honestly", () => {
     const labels = WORK_COLUMNS.map((status) => cardStatusLabel(card({ status })));
     expect(labels.every((label) => label.length > 0)).toBe(true);
@@ -279,6 +298,41 @@ describe("statusTone", () => {
   it("paints finished work as success and abandoned work as idle", () => {
     expect(statusTone(card({ status: "done" }))).toBe("success");
     expect(statusTone(card({ status: "cancelled" }))).toBe("idle");
+  });
+
+  it("paints a question as a warning rather than as work in flight", () => {
+    // The work has stopped until it is answered, so a card that merely looked
+    // busy would hide the thing the bot is asking for.
+    expect(statusTone(card({ waiting: true }))).toBe("warning");
+    expect(statusTone(card({ waiting: true, agent: { id: "b", name: "W", busy: true } }))).toBe("warning");
+  });
+});
+
+describe("cardMark", () => {
+  it("marks a card whose bot is waiting on a person", () => {
+    expect(cardMark(card({ waiting: true }))).toBe("question");
+  });
+
+  it("marks a card whose bot is mid-turn", () => {
+    expect(cardMark(card({ agent: { id: "b", name: "W", busy: true } }))).toBe("working");
+  });
+
+  it("marks a card that carries a failure, and only that, as an error", () => {
+    // The red frame means one thing on this board. A blocked card is a status
+    // the column already names, so it must not borrow the error mark.
+    expect(cardMark(card({ lastError: "boom" }))).toBe("error");
+    expect(cardMark(card({ status: "blocked" }))).toBe("none");
+  });
+
+  it("gives an ordinary card no mark at all", () => {
+    expect(cardMark(card({ status: "todo" }))).toBe("none");
+    expect(cardMark(card({ status: "done" }))).toBe("none");
+  });
+
+  it("lets an error outrank a question and a question outrank work", () => {
+    const busy = { id: "b", name: "W", busy: true } as const;
+    expect(cardMark(card({ lastError: "boom", waiting: true, agent: busy }))).toBe("error");
+    expect(cardMark(card({ waiting: true, agent: busy }))).toBe("question");
   });
 });
 

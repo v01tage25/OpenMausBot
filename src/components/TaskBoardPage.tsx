@@ -10,10 +10,12 @@
 // looking at one team must not be able to assign a card to a bot from another
 // one, so the same section key answers both questions.
 import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react";
-import { Columns3, Plus, RefreshCw, X } from "lucide-react";
+import { Columns3, LayoutGrid, Plus, RefreshCw, Trash2, X } from "lucide-react";
 
 import { TaskBoardColumn } from "./TaskBoardColumn";
 import { CARD_DRAG_TYPE } from "./TaskBoardCard";
+import { CardEditorDialog, type CardDraft } from "./CardEditorDialog";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { api, useStore } from "@/state/store";
 import { t } from "@/lib/i18n";
 import {
@@ -51,6 +53,94 @@ function columnLabel(status: WorkColumn): string {
  * neighbours apart, so the column is renumbered instead. */
 const MIN_ORDER_GAP = 1e-6;
 
+/** What the board shows before anyone has put a card on it.
+ *
+ * "No cards yet" plus a sentence is a dead end — it names the absence without
+ * showing what the thing is. This draws a small, unmistakably-not-real board
+ * (a card sitting in a column) beside the one action worth taking from here,
+ * so the empty screen says what a board is for and how to start one. */
+function BoardEmptyState({ onCreate }: { onCreate: () => void }) {
+  const preview: Array<{ title: string; width: string; delay: string }> = [
+    { title: t("taskBoard.empty.sample1"), width: "w-[78%]", delay: "0ms" },
+    { title: t("taskBoard.empty.sample2"), width: "w-[62%]", delay: "120ms" },
+    { title: t("taskBoard.empty.sample3"), width: "w-[70%]", delay: "240ms" },
+  ];
+  return (
+    <div className="flex flex-col items-center py-10 text-center">
+      {/* aria-hidden: this is a picture of a board, not a board. A screen
+          reader should get the heading and the button, nothing else. */}
+      <div
+        aria-hidden="true"
+        className="animate-pop-in relative w-full max-w-[420px] rounded-2xl border border-hairline/40 bg-panel/60 p-3"
+      >
+        <div className="mb-2 flex items-center gap-2 px-1">
+          <LayoutGrid size={13} className="text-accent" />
+          <span className="h-1.5 w-16 rounded-full bg-ink-secondary/25" />
+        </div>
+        <div className="grid grid-cols-2 gap-2.5">
+          <div className="rounded-xl border border-hairline/40 bg-card/70 p-2.5">
+            <span className="mb-2 block h-1.5 w-10 rounded-full bg-ink-secondary/25" />
+            <div className="space-y-1.5">
+              {preview.map((row) => (
+                <div
+                  key={row.title}
+                  style={{ animationDelay: row.delay }}
+                  className="animate-rise rounded-lg border border-hairline/40 bg-card px-2.5 py-2 text-left"
+                >
+                  <span className="block truncate text-[11px] font-medium text-ink-secondary/85">{row.title}</span>
+                  <span className={cn("mt-1.5 block h-1 rounded-full bg-ink-secondary/15", row.width)} />
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-xl border border-dashed border-hairline/40 bg-card/30 p-2.5">
+            <span className="mb-2 block h-1.5 w-8 rounded-full bg-ink-secondary/20" />
+            <div className="flex h-[calc(100%-1.25rem)] items-center justify-center">
+              <Plus size={16} className="text-ink-secondary/35" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h2 className="mt-6 text-[15px] font-semibold text-ink">{t("taskBoard.empty.title")}</h2>
+      <p className="mx-auto mt-1.5 max-w-md text-[12.5px] leading-relaxed text-ink-secondary">
+        {t("taskBoard.empty.body")}
+      </p>
+      <button
+        type="button"
+        onClick={onCreate}
+        className="mt-4 flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2.5 text-[12.5px] font-semibold text-white transition hover:bg-accent/90"
+      >
+        <Plus size={14} />
+        {t("taskBoard.empty.cta")}
+      </button>
+    </div>
+  );
+}
+
+/** The board's own loading state: the shape of what is coming, rather than a
+ * line of text where six columns will be. */
+function BoardSkeleton() {
+  return (
+    <div aria-busy="true" aria-label={t("taskBoard.loading")} className="@container">
+      <div className="grid grid-cols-1 items-start gap-3 @md:grid-cols-2 @3xl:grid-cols-3 @5xl:grid-cols-6">
+        {WORK_COLUMNS.map((status) => (
+          <div key={status} className="rounded-2xl border border-hairline/40 bg-panel/60 p-2.5">
+            <div className="mb-2 flex items-center justify-between px-1.5">
+              <span className="h-1.5 w-14 rounded-full bg-ink-secondary/20" />
+              <span className="h-1.5 w-3 rounded-full bg-ink-secondary/15" />
+            </div>
+            <div className="animate-pulse space-y-2">
+              <div className="h-[74px] rounded-xl border border-hairline/40 bg-card/60" />
+              <div className="h-[74px] rounded-xl border border-hairline/40 bg-card/40" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function TaskBoardPage() {
   const { state, dispatch } = useStore();
   const bots = state.bots;
@@ -62,10 +152,11 @@ export function TaskBoardPage() {
   const [error, setError] = useState<string | null>(null);
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
   const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [composing, setComposing] = useState(false);
-  const [draftTitle, setDraftTitle] = useState("");
-  const [draftBrief, setDraftBrief] = useState("");
-  const [draftAgent, setDraftAgent] = useState("");
+  /** The card the editor is open on, or `"new"` when making one. `null` is
+   * closed — three states, because "editing nothing" and "creating" are not
+   * the same dialog. */
+  const [editorTarget, setEditorTarget] = useState<BoardCard | "new" | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<BoardCard | null>(null);
 
   const refresh = useCallback(async (showSpinner = false) => {
     if (showSpinner) setLoading(true);
@@ -146,10 +237,13 @@ export function TaskBoardPage() {
     }
   }, [fail, refresh]);
 
-  const remove = useCallback(async (card: BoardCard) => {
-    // The bot's chat is kept — deleting a card is deleting the reminder, not
-    // the conversation, and the copy says so before anything happens.
-    if (!window.confirm(t("taskBoard.delete.confirm"))) return;
+  /** Deleting is confirmed in the app's own dialog, not the browser's. The
+   * bot's chat is kept — deleting a card is deleting the reminder, not the
+   * conversation, and the dialog says so before anything happens. */
+  const confirmDelete = useCallback(async () => {
+    const card = pendingDelete;
+    setPendingDelete(null);
+    if (!card) return;
     try {
       await api(`/api/task-board/items/${card.id}`, { method: "DELETE" });
     } catch (requestError) {
@@ -157,35 +251,42 @@ export function TaskBoardPage() {
     } finally {
       void refresh();
     }
-  }, [fail, refresh]);
+  }, [fail, pendingDelete, refresh]);
 
   const openChat = useCallback((card: BoardCard) => {
     if (!card.ownerBotId) return;
     dispatch({ type: "select", id: card.ownerBotId });
   }, [dispatch]);
 
-  const create = useCallback(async () => {
-    const title = draftTitle.trim();
-    if (!title) return;
+  /** One submit for both halves of the editor: a new card is a POST, an
+   * edited one is a PATCH, and the only difference is which route and which
+   * fields the server already has. */
+  const saveCard = useCallback(async (draft: CardDraft) => {
+    const target = editorTarget;
+    const body = {
+      title: draft.title,
+      brief: draft.brief,
+      // Sent explicitly on both routes so clearing the bot is a real edit
+      // rather than a field the PATCH quietly ignores.
+      ownerBotId: draft.ownerBotId,
+    };
     try {
-      await api("/api/task-board/items", {
-        method: "POST",
-        body: JSON.stringify({
-          title,
-          ...(draftBrief.trim() ? { brief: draftBrief.trim() } : {}),
-          ...(draftAgent ? { ownerBotId: draftAgent } : {}),
-        }),
-      });
-      setDraftTitle("");
-      setDraftBrief("");
-      setDraftAgent("");
-      setComposing(false);
+      if (target === "new") {
+        await api("/api/task-board/items", { method: "POST", body: JSON.stringify(body) });
+      } else if (target) {
+        await api(`/api/task-board/items/${target.id}`, { method: "PATCH", body: JSON.stringify(body) });
+      }
+      setEditorTarget(null);
     } catch (requestError) {
+      // The dialog stays open on a failure, with the person's words still in
+      // it. Rethrown so the dialog knows the save did not happen and keeps
+      // itself open rather than closing over a card that was never written.
       fail(requestError);
+      throw requestError;
     } finally {
       void refresh();
     }
-  }, [draftAgent, draftBrief, draftTitle, fail, refresh]);
+  }, [editorTarget, fail, refresh]);
 
   const handleDragStart = useCallback((card: BoardCard, event: DragEvent<HTMLDivElement>) => {
     event.dataTransfer.setData(CARD_DRAG_TYPE, card.id);
@@ -237,18 +338,18 @@ export function TaskBoardPage() {
 
   return (
     <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-app text-ink">
-      <header className="flex shrink-0 items-center justify-between border-b border-hairline/40 px-7 py-5 max-md:pl-12">
-        <div>
+      <header className="flex shrink-0 items-start justify-between gap-4 border-b border-hairline/40 px-7 py-5 max-md:pl-12">
+        <div className="min-w-0">
           <div className="flex items-center gap-2.5">
-            <Columns3 size={20} className="text-accent" />
+            <Columns3 size={20} className="shrink-0 text-accent" />
             <h1 className="text-[18px] font-semibold">{t("taskBoard.title")}</h1>
           </div>
-          <p className="mt-1 max-w-2xl text-[12.5px] text-ink-secondary">{t("taskBoard.subtitle")}</p>
+          <p className="mt-1 max-w-2xl text-[12.5px] text-ink-secondary max-md:hidden">{t("taskBoard.subtitle")}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
-            onClick={() => setComposing((open) => !open)}
+            onClick={() => setEditorTarget("new")}
             className="flex items-center gap-1.5 rounded-lg bg-accent px-3.5 py-2 text-[12.5px] font-semibold text-white transition hover:bg-accent/90"
           >
             <Plus size={14} />
@@ -298,7 +399,7 @@ export function TaskBoardPage() {
         ))}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-7 py-6">
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-7 sm:py-6">
         {error && (
           <div className="mb-4 flex items-start justify-between gap-3 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-[12px] text-danger">
             <span>{error}</span>
@@ -308,88 +409,69 @@ export function TaskBoardPage() {
           </div>
         )}
 
-        {composing && (
-          <div className="mb-5 rounded-2xl border border-hairline/50 bg-panel p-4">
-            <input
-              value={draftTitle}
-              onChange={(event) => setDraftTitle(event.target.value)}
-              placeholder={t("taskBoard.newCard.title")}
-              className="w-full rounded-lg border border-hairline/50 bg-card px-3 py-2 text-[13px] text-ink outline-none focus:border-accent/50"
-              autoFocus
-            />
-            <textarea
-              value={draftBrief}
-              onChange={(event) => setDraftBrief(event.target.value)}
-              placeholder={t("taskBoard.newCard.brief")}
-              rows={2}
-              className="mt-2 w-full resize-none rounded-lg border border-hairline/50 bg-card px-3 py-2 text-[12.5px] text-ink outline-none focus:border-accent/50"
-            />
-            <div className="mt-2 flex items-center gap-2">
-              <select
-                value={draftAgent}
-                onChange={(event) => setDraftAgent(event.target.value)}
-                className="rounded-lg border border-hairline/50 bg-card px-3 py-2 text-[12.5px] text-ink outline-none focus:border-accent/50"
-              >
-                <option value="">{t("taskBoard.newCard.agent")}</option>
-                {assignable.map((bot) => (
-                  <option key={bot.id} value={bot.id}>
-                    {bot.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={() => void create()}
-                disabled={!draftTitle.trim()}
-                className="rounded-lg bg-accent px-3.5 py-2 text-[12.5px] font-semibold text-white transition hover:bg-accent/90 disabled:opacity-45"
-              >
-                {t("taskBoard.newCard.submit")}
-              </button>
-              <button
-                type="button"
-                onClick={() => setComposing(false)}
-                className="rounded-lg px-3 py-2 text-[12.5px] text-ink-secondary hover:text-ink"
-              >
-                {t("taskBoard.newCard.cancel")}
-              </button>
+        {loading && cards.length === 0 ? (
+          <BoardSkeleton />
+        ) : visible.length === 0 ? (
+          <BoardEmptyState onCreate={() => setEditorTarget("new")} />
+        ) : (
+          /* The board scrolls inside its own pane. It used to size each column
+             to a fixed width and let the row run past the window, which put
+             the last columns off-screen with nothing to drag them back.
+             A container query, not a viewport one: the sidebar takes a
+             variable slice of the window, so what matters is how much room
+             the board itself was given, not how wide the window is. */
+          <div className="@container">
+            <div className="grid grid-cols-1 items-start gap-3 @2xl:grid-cols-2 @4xl:grid-cols-3 @7xl:grid-cols-6">
+              {WORK_COLUMNS.map((status) => (
+                <TaskBoardColumn
+                  key={status}
+                  title={columnLabel(status)}
+                  count={columns[status].length}
+                  cards={columns[status]}
+                  onDrop={(cardId, beforeId) => void handleDrop(status, cardId, beforeId)}
+                  renderCard={(card) => ({
+                    bot: card.ownerBotId ? botById.get(card.ownerBotId) ?? null : null,
+                    agent: card.agent,
+                    running: runningIds.has(card.id),
+                    onRun: (target) => void run(target),
+                    onStop: (target) => void stop(target),
+                    onEdit: (target) => setEditorTarget(target),
+                    onDelete: (target) => setPendingDelete(target),
+                    onOpenChat: openChat,
+                    onDragStart: handleDragStart,
+                    onDragEnd: dragEnd,
+                    dragging: draggingId === card.id,
+                  })}
+                />
+              ))}
             </div>
           </div>
         )}
-
-        {loading && cards.length === 0 ? (
-          <p className="py-10 text-center text-[12.5px] text-ink-secondary">{t("taskBoard.loading")}</p>
-        ) : visible.length === 0 ? (
-          <div className="py-14 text-center">
-            <p className="text-[14px] font-semibold text-ink">{t("taskBoard.empty.title")}</p>
-            <p className="mx-auto mt-1.5 max-w-md text-[12.5px] leading-relaxed text-ink-secondary">
-              {t("taskBoard.empty.body")}
-            </p>
-          </div>
-        ) : (
-          <div className="flex min-h-0 items-start gap-3">
-            {WORK_COLUMNS.map((status) => (
-              <TaskBoardColumn
-                key={status}
-                title={columnLabel(status)}
-                cards={columns[status]}
-                onDrop={(cardId, beforeId) => void handleDrop(status, cardId, beforeId)}
-                renderCard={(card) => ({
-                  bot: card.ownerBotId ? botById.get(card.ownerBotId) ?? null : null,
-                  agent: card.agent,
-                  running: runningIds.has(card.id),
-                  onRun: (target) => void run(target),
-                  onStop: (target) => void stop(target),
-                  onDelete: (target) => void remove(target),
-                  onOpenChat: openChat,
-                  onDragStart: handleDragStart,
-                  onDragEnd: dragEnd,
-                  dragging: draggingId === card.id,
-                })}
-              />
-            ))}
-          </div>
-        )}
       </div>
+
+      <CardEditorDialog
+        open={editorTarget !== null}
+        card={editorTarget && editorTarget !== "new" ? editorTarget : null}
+        bots={assignable.map((bot) => ({
+          id: bot.id,
+          name: bot.name,
+          subtitle: bot.section?.trim() || null,
+          mascotExpression: bot.mascotExpression ?? null,
+        }))}
+        onCancel={() => setEditorTarget(null)}
+        onSubmit={saveCard}
+      />
+
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title={t("taskBoard.delete.title")}
+        body={t("taskBoard.delete.confirm")}
+        confirmLabel={t("taskBoard.delete.confirmAction")}
+        tone="danger"
+        icon={<Trash2 size={18} />}
+        onCancel={() => setPendingDelete(null)}
+        onConfirm={() => void confirmDelete()}
+      />
     </main>
   );
 }

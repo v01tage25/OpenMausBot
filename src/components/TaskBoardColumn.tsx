@@ -18,6 +18,10 @@ import { cn } from "@/lib/cn";
 
 export interface TaskBoardColumnProps {
   title: string;
+  /** Shown in the header. Passed in rather than counted here, because the
+   * header must agree with the list the page actually handed over — including
+   * when a card arrives from another column mid-render. */
+  count: number;
   cards: BoardCard[];
   renderCard: (card: BoardCard) => Omit<TaskBoardCardProps, "card">;
   onDrop: (cardId: string, beforeId: string | null) => void;
@@ -25,6 +29,7 @@ export interface TaskBoardColumnProps {
 
 export function TaskBoardColumn({
   title,
+  count,
   cards,
   renderCard,
   onDrop,
@@ -60,21 +65,24 @@ export function TaskBoardColumn({
       onDragLeave={() => setOver(false)}
       onDrop={(event) => handleDrop(event, null)}
       className={cn(
-        "flex min-h-0 w-[268px] shrink-0 flex-col rounded-2xl border bg-panel/60 p-2.5 transition",
+        // Width comes from the grid that lays the columns out, never from a
+        // fixed size here: a column that insisted on 268px pushed the last
+        // ones past the window edge with no way to reach them.
+        "flex min-h-0 min-w-0 flex-col rounded-2xl border bg-panel/60 p-2.5 transition",
         over ? "border-accent/45 bg-accent/5" : "border-hairline/40",
       )}
       aria-label={title}
     >
       <header className="mb-2 flex items-center justify-between px-1.5">
-        <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-secondary">{title}</h2>
-        <span className="text-[10.5px] tabular-nums text-ink-secondary/70">{cards.length}</span>
+        <h2 className="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-secondary">{title}</h2>
+        <span className="shrink-0 text-[10.5px] tabular-nums text-ink-secondary/70">{count}</span>
       </header>
 
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-0.5 pb-1">
         {cards.length === 0 && (
           <p className="px-2 py-6 text-center text-[11px] text-ink-secondary/55">{t("taskBoard.emptyColumn")}</p>
         )}
-        {cards.map((card) => (
+        {cards.map((card, index) => (
           <div
             key={card.id}
             onDragOver={(event) => {
@@ -90,7 +98,7 @@ export function TaskBoardColumn({
               handleDrop(event, card.id);
             }}
           >
-            <TaskBoardCardView card={card} {...renderCard(card)} />
+            <TaskBoardCardView card={card} {...renderCard(card)} appearIndex={index} />
           </div>
         ))}
       </div>
