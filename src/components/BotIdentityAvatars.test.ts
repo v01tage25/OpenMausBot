@@ -34,7 +34,10 @@ vi.mock("@/state/store", async (original) => {
   const actual = await original<typeof import("@/state/store")>();
   return { ...actual, useStore: () => ({ state: { ...actual.initialState, bots: avatarBots, groups: [avatarGroup] }, dispatch: vi.fn() }) };
 });
-vi.mock("./DesktopCapabilities", () => ({ useDesktopCapabilities: () => ({ capabilities: { dictation: { available: false } } }) }));
+vi.mock("./DesktopCapabilities", () => ({
+  useDesktopCapabilities: () => ({ capabilities: { dictation: { available: false } } }),
+  useCaptionChrome: () => ({ windowsCaption: false, dragStyle: undefined, noDragStyle: undefined, controlsShiftStyle: undefined, padClass: undefined }),
+}));
 vi.mock("react-dom", async (original) => ({ ...await original<object>(), createPortal: (children: unknown) => children }));
 import { GroupView, RoomToolChip } from "./GroupView";
 import { UsageSection } from "./UsageSection";

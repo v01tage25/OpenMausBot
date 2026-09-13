@@ -18,7 +18,10 @@ vi.mock("react-dom", async (importOriginal) => {
     return node;
   } };
 });
-vi.mock("./DesktopCapabilities", () => ({ useDesktopCapabilities: () => ({}) }));
+vi.mock("./DesktopCapabilities", () => ({
+  useDesktopCapabilities: () => ({}),
+  useCaptionChrome: () => ({ windowsCaption: false, dragStyle: undefined, noDragStyle: undefined, controlsShiftStyle: undefined, padClass: undefined }),
+}));
 vi.mock("@/lib/thread-preferences", () => ({ useShowThreads: () => true }));
 vi.mock("@/state/store", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/state/store")>();

@@ -35,6 +35,7 @@ vi.mock("./VerifyCard", async (importOriginal) => {
 });
 vi.mock("./DesktopCapabilities", () => ({
   useDesktopCapabilities: () => ({ capabilities: { dictation: { available: false } }, ready: true }),
+  useCaptionChrome: () => ({ windowsCaption: false, dragStyle: undefined, noDragStyle: undefined, controlsShiftStyle: undefined, padClass: undefined }),
 }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 // The thread controls read live model lists; they are not what this file tests.
