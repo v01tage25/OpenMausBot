@@ -47,20 +47,30 @@ Two things get mistaken for it, and neither is a todo list:
    transcript — `"running" | "passed" | "failed"`, not editable, not persisted, not per-card.
 
 **Consequence.** "Sync with the native todolist" has no referent. So there are two honest
-options, and this is a decision for you rather than for me:
+options:
 
 - **(A) Build the card checklist as its own thing** (§4). It lives on the card, persists
   with the card, and "all items done → card moves to Done" is a rule in the card model. No
-  sync, because there is nothing to sync with. ~1 day.
+  sync, because there is nothing to sync with.
 - **(B) Build the todo list *first* as a real feature**, then sync cards to it. That is a
   bigger piece of work with its own questions: is it per bot, per thread, or global? Does
   the agent get a tool to write it? Does it survive a thread being closed? It is a
   feature in its own right, not a prerequisite for cards.
 
-My recommendation is **(A) now, (B) later if you want it** — a card's steps are useful
-immediately, and (B) is a decision worth making on its own terms rather than as a side
-effect of the board. **This document designs (A)** and flags exactly where (B) would
-attach later (§4.4) so nothing has to be undone.
+**Decision (2026-09-14): build (A) now. Do not build a separate todo list yet.**
+The card checklist is worth having on its own, and a global todo feature is a decision to
+make deliberately rather than as a side effect of the board. This document designs (A) and
+flags exactly where (B) would attach later (§4.4) so nothing has to be undone.
+
+**A proposal for you to consider, in plain words.** Once cards have checklists, the
+natural next step is to make that checklist a *first-class thing the bot can also see and
+write* — a real todo list with its own storage, one the agent has a tool for, and which
+cards merely display. That would let a bot break its own work into steps and show its
+progress on the board without anyone typing them in, and it is the version that would make
+"sync with the todolist" literally true. It is deliberately **not** in scope here: it
+needs decisions about scope (per bot / per thread / global), whether the agent may edit it
+mid-turn, and what happens when a thread it belongs to is deleted. Worth doing as its own
+piece of work, with its own design, rather than smuggled in with the board.
 
 If you actually meant an *external* list — a different tool, a file, GitHub issues — tell
 me which and I will design against that instead.
@@ -125,6 +135,27 @@ becomes one one-off routine, visible in the Automations calendar, editable from 
 side. Clearing the date on the card disables the routine. Changing it re-points the same
 routine rather than piling up new ones.
 
+### 2.2a When the start time may fire (decided 2026-09-14)
+
+The date alone does not arm a card. **A start time only fires while the card is in the
+`todo` column**, and it fires when the card is *moved into* `todo`, not the moment it is
+typed:
+
+- Setting a time on a card in Backlog stores it and shows it, but schedules nothing. The
+  card is a plan; nothing runs from a plan.
+- **Dropping the card into To do arms it** — that is the gesture that means "this is ready
+  to go". The routine is created (or enabled) at that moment, from the card's stored time.
+- Moving it back out of To do disarms it: the routine is disabled, so a card pulled back
+  to Backlog cannot fire while the person is still thinking about it.
+- It still fires **once**. After it runs, the card is done with its schedule until the
+  person moves it into To do again with a new time.
+
+This is why the trigger is the column and not just the clock: "To do" is already this
+board's word for "ready to start", so hanging the schedule off it means the person never
+has to reason about two separate switches — the column they chose *is* the switch. It also
+means a card can safely carry a future time for days without any risk that it starts work
+nobody meant to release yet.
+
 ### 2.3 Deliberately not doing
 
 - No repeat/interval picker on cards. Recurrence is a routine's job; if you want a
@@ -172,6 +203,10 @@ When a card has:
 - **2+ bots** — a **room**: the card runs its turn through `startGroupTurn`.
 
 ### 3.3 The room behind a multi-bot card
+
+**Decided (2026-09-14): a card with 2+ bots gets a group chat, and that room is expected
+to exist.** The room is the point, not a side effect — assigning two bots is asking for
+the two of them to work the card together, and a room is where that conversation lives.
 
 The card gets `groupId?` and `threadId?` (already exists) pointing at a room created for
 this work:
@@ -305,17 +340,27 @@ get two half-features instead of one working one.
 ## 6. Sequencing
 
 1. **Checklist** (§4) — self-contained, no new subsystem, immediately useful.
-2. **Dates** (§2) — `dueAt` display, then the `runAt`→routine bridge.
+2. **Dates** (§2) — `dueAt` display, then the `runAt`→routine bridge armed by the To-do
+   column (§2.2a).
 3. **Multi-bot** (§3) — the largest: model, room creation, run/stop through the room,
    then the picker. Last because it is the one that can cost provider turns if wrong.
 
 Each step lands green on its own. Tests come with the code, as the previous rounds did.
 
-## 7. What I need from you
+## 7. Decisions (answered 2026-09-14)
 
-1. **§1**: build the card checklist as its own feature (A), or build a real todo list first
-   (B)? Or did you mean an external/third-party list I should target instead?
-2. **§3**: is "assigning 2+ bots creates a room for that card" the integration you had in
-   mind, or did you expect a card's bots to work without a room appearing in the sidebar?
-3. **§2**: should a start time be limited to one card's single run (my design), or do you
-   want cards that repeat on a schedule?
+1. **Todolist** — build the card checklist standalone. **No** separate todo list for now.
+   The doc records a proposal (§1) to later make it a first-class thing the bot can read
+   and write, which is the version that would make "sync with the todolist" literally
+   true. Not in scope here; it needs its own design.
+2. **Multi-bot** — yes, 2+ bots means a group chat with them. The room is the integration,
+   and it is expected to exist (§3.3).
+3. **Start time** — the trigger is the **To do column**, not the clock alone: setting a
+   time schedules nothing, dropping the card into To do arms it, and moving it out
+   disarms it (§2.2a). It runs once per arming.
+
+Open question that still needs you, before §3 is built: a room appearing in the sidebar
+per multi-bot card will add to that list over time. Should a card's room be hidden from
+the sidebar until someone opens it, or is a visible room the honest thing — you can see
+the conversation where the work is happening? My inclination is visible, because a hidden
+room containing real work is how a chat gets lost.
