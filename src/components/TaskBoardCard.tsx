@@ -9,7 +9,7 @@
 // looking at the button is looking at the card, not at a chat. And a card
 // never starts work by being dropped somewhere: the buttons are the only way,
 // and they are deliberate.
-import { CalendarClock, ExternalLink, HelpCircle, Loader2, Pencil, Play, Trash2, X } from "lucide-react";
+import { CalendarClock, HelpCircle, Loader2, MessageCircle, Pencil, Play, Trash2, X } from "lucide-react";
 import type { DragEvent } from "react";
 
 import { BotAvatar } from "./Avatar";
@@ -20,6 +20,7 @@ import {
   cardSection,
   cardStatusLabel,
   elapsedLabel,
+  runIsLive,
   runAvailability,
   statusTone,
   stopAvailability,
@@ -43,8 +44,11 @@ const toneClasses = {
 export interface TaskBoardCardProps {
   card: BoardCard;
   /** The bot as the app knows it, for the avatar. Absent when the assigned
-   * bot was deleted, which the card reports as such rather than pretending. */
-  bot?: { id: string; name: string; mascotExpression?: string | null } | null;
+   * bot was deleted, which the card reports as such rather than pretending.
+   * `color` and `mascotBody` are part of the shape because BotAvatar draws
+   * its mascot from them — a card that left them out showed the default
+   * colour, so every bot on the board looked the same. */
+  bot?: { id: string; name: string; color?: string | null; mascotBody?: string | null; mascotExpression?: string | null } | null;
   agent: BoardAgent | null | undefined;
   running: boolean;
   onRun: (card: BoardCard) => void;
@@ -78,6 +82,7 @@ export function TaskBoardCardView({
   const availability = runAvailability({ ...card, agent });
   const canStop = stopAvailability({ ...card, agent });
   const elapsed = elapsedLabel({ ...card, agent }, Date.now(), formatElapsed);
+  const liveRun = runIsLive({ ...card, agent });
   const tone = statusTone({ ...card, agent });
   const mark = cardMark({ ...card, agent });
 
@@ -194,7 +199,15 @@ export function TaskBoardCardView({
           {cardStatusLabel({ ...card, agent })}
         </span>
 
-        {elapsed && <span className="ml-auto text-[10.5px] tabular-nums text-ink-secondary/75">{elapsed}</span>}
+        {elapsed && (
+          /* A running clock is marked as running; a finished one is a plain
+             duration. Without the dot the two read identically, and "how long
+             it took" is mistaken for "how long it has been going". */
+          <span className="ml-auto flex items-center gap-1.5 text-[10.5px] tabular-nums text-ink-secondary/75">
+            {liveRun && <span className="size-1.5 shrink-0 animate-status-pulse rounded-full bg-accent" aria-hidden="true" />}
+            {elapsed}
+          </span>
+        )}
       </div>
 
       <div className="mt-2.5 flex items-center gap-2">
@@ -237,7 +250,7 @@ export function TaskBoardCardView({
           title={card.threadId ? t("taskBoard.card.openChat") : t("taskBoard.card.noChat")}
           className="ml-auto flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-secondary transition hover:bg-raised hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
         >
-          <ExternalLink size={14} />
+          <MessageCircle size={14} />
         </button>
       </div>
 

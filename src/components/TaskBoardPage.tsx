@@ -10,7 +10,7 @@
 // looking at one team must not be able to assign a card to a bot from another
 // one, so the same section key answers both questions.
 import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react";
-import { Columns3, LayoutGrid, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { ArrowLeft, Columns3, LayoutGrid, Plus, RefreshCw, Trash2, X } from "lucide-react";
 
 import { TaskBoardColumn } from "./TaskBoardColumn";
 import { CARD_DRAG_TYPE } from "./TaskBoardCard";
@@ -141,7 +141,7 @@ function BoardSkeleton() {
   );
 }
 
-export function TaskBoardPage() {
+export function TaskBoardPage({ onBack }: { onBack?: () => void } = {}) {
   const { state, dispatch } = useStore();
   const bots = state.bots;
 
@@ -338,13 +338,28 @@ export function TaskBoardPage() {
 
   return (
     <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-app text-ink">
-      <header className="flex shrink-0 items-start justify-between gap-4 border-b border-hairline/40 px-7 py-5 max-md:pl-12">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2.5">
-            <Columns3 size={20} className="shrink-0 text-accent" />
-            <h1 className="text-[18px] font-semibold">{t("taskBoard.title")}</h1>
+      <header className="flex shrink-0 items-start justify-between gap-4 border-b border-hairline/40 px-7 py-5">
+        <div className="flex min-w-0 items-start gap-3">
+          {/* The board owns the whole window, so it draws the way back itself
+              — the sidebar that used to sit here is gone. */}
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              aria-label={t("taskBoard.back")}
+              title={t("taskBoard.back")}
+              className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg text-ink-secondary transition hover:bg-raised hover:text-ink"
+            >
+              <ArrowLeft size={18} />
+            </button>
+          )}
+          <div className="min-w-0">
+            <div className="flex items-center gap-2.5">
+              <Columns3 size={20} className="shrink-0 text-accent" />
+              <h1 className="text-[18px] font-semibold">{t("taskBoard.title")}</h1>
+            </div>
+            <p className="mt-1 max-w-2xl text-[12.5px] text-ink-secondary max-md:hidden">{t("taskBoard.subtitle")}</p>
           </div>
-          <p className="mt-1 max-w-2xl text-[12.5px] text-ink-secondary max-md:hidden">{t("taskBoard.subtitle")}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button
@@ -370,7 +385,7 @@ export function TaskBoardPage() {
 
       {/* The team switcher filters the cards and the agent picker together, so
           a card can never be handed to a bot the current team cannot see. */}
-      <div className="flex shrink-0 items-center gap-2 overflow-x-auto border-b border-hairline/30 px-7 py-2.5 max-md:pl-12">
+      <div className="flex shrink-0 items-center gap-2 overflow-x-auto border-b border-hairline/30 px-7 py-2.5">
         <span className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-secondary">
           {t("taskBoard.team.label")}
         </span>
@@ -417,11 +432,13 @@ export function TaskBoardPage() {
           /* The board scrolls inside its own pane. It used to size each column
              to a fixed width and let the row run past the window, which put
              the last columns off-screen with nothing to drag them back.
-             A container query, not a viewport one: the sidebar takes a
-             variable slice of the window, so what matters is how much room
-             the board itself was given, not how wide the window is. */
+             A container query, not a viewport one: the sidebar is gone on
+             this screen but the pane can still be narrow, so what matters is
+             how much room the board itself was given.
+             Six across needs ~1900px because a card below ~240px truncates
+             its own title, which is the one thing a card must always show. */
           <div className="@container">
-            <div className="grid grid-cols-1 items-start gap-3 @2xl:grid-cols-2 @4xl:grid-cols-3 @7xl:grid-cols-6">
+            <div className="grid grid-cols-1 items-start gap-3 @2xl:grid-cols-2 @4xl:grid-cols-3 @7xl:grid-cols-4 min-[1560px]:grid-cols-6">
               {WORK_COLUMNS.map((status) => (
                 <TaskBoardColumn
                   key={status}
@@ -456,6 +473,10 @@ export function TaskBoardPage() {
           id: bot.id,
           name: bot.name,
           subtitle: bot.section?.trim() || null,
+          // Carried through so the picker draws each bot's own mascot rather
+          // than the default colour.
+          color: bot.color ?? null,
+          mascotBody: bot.mascotBody ?? null,
           mascotExpression: bot.mascotExpression ?? null,
         }))}
         onCancel={() => setEditorTarget(null)}

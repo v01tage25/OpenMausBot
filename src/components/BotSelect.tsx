@@ -21,6 +21,11 @@ export interface BotSelectOption {
   name: string;
   /** Shown as a second line, the way the sidebar labels a bot. */
   subtitle?: string | null;
+  /** The bot's own avatar inputs. These are passed straight to BotAvatar,
+   * which draws a mascot from `color` and `mascotBody` — without them every
+   * row fell back to the default colour and the whole list came out green. */
+  color?: string | null;
+  mascotBody?: string | null;
   mascotExpression?: string | null;
 }
 
@@ -34,6 +39,19 @@ export interface BotSelectProps {
   disabled?: boolean;
   /** Sits above the trigger and labels the field. */
   label?: string;
+}
+
+/** The exact shape BotAvatar needs, taken from the option rather than
+ * rebuilt from scratch — rebuilding is what dropped `color` and made every
+ * avatar in this list the same green. */
+function avatarBot(option: BotSelectOption) {
+  return {
+    id: option.id,
+    name: option.name,
+    color: option.color ?? undefined,
+    mascotBody: option.mascotBody ?? undefined,
+    mascotExpression: option.mascotExpression ?? undefined,
+  } as never;
 }
 
 /** Only shown once the list is long enough that scanning it is worse than
@@ -152,13 +170,7 @@ export function BotSelect({
       >
         {selected ? (
           <>
-            <BotAvatar
-              bot={{ id: selected.id, name: selected.name, mascotExpression: selected.mascotExpression ?? undefined } as never}
-              size={22}
-              motion="none"
-              motionKey={0}
-              animated={false}
-            />
+            <BotAvatar bot={avatarBot(selected)} size={22} motion="none" motionKey={0} animated={false} />
             <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-ink">{selected.name}</span>
           </>
         ) : (
@@ -222,13 +234,7 @@ export function BotSelect({
                     active ? "bg-accent/12" : "hover:bg-raised",
                   )}
                 >
-                  <BotAvatar
-                    bot={{ id: bot.id, name: bot.name, mascotExpression: bot.mascotExpression ?? undefined } as never}
-                    size={22}
-                    motion="none"
-                    motionKey={0}
-                    animated={false}
-                  />
+                  <BotAvatar bot={avatarBot(bot)} size={22} motion="none" motionKey={0} animated={false} />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[12.5px] font-medium text-ink">{bot.name}</span>
                     {bot.subtitle && (
