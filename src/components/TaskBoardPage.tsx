@@ -197,6 +197,26 @@ export function TaskBoardPage({ onBack }: { onBack?: () => void } = {}) {
 
   const columns = useMemo(() => columnsOf(visible), [visible]);
 
+  /** The editor's bot list and its cancel handler are memoized so the dialog
+   * is not handed new props on every board poll. A fresh `onCancel` each
+   * render is what used to re-run the dialog's focus effect mid-typing and
+   * drag the caret back to the title. */
+  const assignableOptions = useMemo(
+    () => assignable.map((bot) => ({
+      id: bot.id,
+      name: bot.name,
+      subtitle: bot.section?.trim() || null,
+      // Carried through so the picker draws each bot's own mascot rather than
+      // the default colour.
+      color: bot.color ?? null,
+      mascotBody: bot.mascotBody ?? null,
+      mascotExpression: bot.mascotExpression ?? null,
+    })),
+    [assignable],
+  );
+
+  const closeEditor = useCallback(() => setEditorTarget(null), []);
+
   const botById = useMemo(() => new Map(bots.map((bot) => [bot.id, bot])), [bots]);
 
   const fail = useCallback((requestError: unknown) => {
@@ -469,17 +489,8 @@ export function TaskBoardPage({ onBack }: { onBack?: () => void } = {}) {
       <CardEditorDialog
         open={editorTarget !== null}
         card={editorTarget && editorTarget !== "new" ? editorTarget : null}
-        bots={assignable.map((bot) => ({
-          id: bot.id,
-          name: bot.name,
-          subtitle: bot.section?.trim() || null,
-          // Carried through so the picker draws each bot's own mascot rather
-          // than the default colour.
-          color: bot.color ?? null,
-          mascotBody: bot.mascotBody ?? null,
-          mascotExpression: bot.mascotExpression ?? null,
-        }))}
-        onCancel={() => setEditorTarget(null)}
+        bots={assignableOptions}
+        onCancel={closeEditor}
         onSubmit={saveCard}
       />
 

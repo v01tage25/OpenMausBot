@@ -55,6 +55,15 @@ export function CardEditorDialog({ open, card, bots, onCancel, onSubmit }: CardE
     setFailure(null);
   }, [open, card]);
 
+  /** Focus the title once, when the dialog opens — and never again.
+ *
+ * This is its own effect, keyed on `open` alone, on purpose. It used to share
+ * an effect with the key handler, which depends on `onCancel` — a callback the
+ * parent re-creates every render. So each keystroke re-rendered the dialog,
+ * handed the effect a new `onCancel`, and re-ran it: the caret was yanked back
+ * to the title and the text re-selected while the person was typing the brief.
+ * Keying on `open` means focus is set on open whatever the parent's callbacks
+ * do. */
   useEffect(() => {
     if (!open) return;
     returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -62,7 +71,10 @@ export function CardEditorDialog({ open, card, bots, onCancel, onSubmit }: CardE
     // thing being changed, not appending to it.
     titleRef.current?.focus();
     titleRef.current?.select();
+  }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
