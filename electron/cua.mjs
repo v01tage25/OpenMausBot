@@ -52,14 +52,18 @@ const CUA_ENV = { CUA_DRIVER_RS_TELEMETRY_ENABLED: "0" };
 const execFileAsync = promisify(execFile);
 process.env.CUA_DRIVER_RS_TELEMETRY_ENABLED ??= "0";
 
-const WIN_INSTALLED_DRIVER = path.join(
-  app.getPath("home"),
-  "AppData/Local/Programs/CuaDriver/cua-driver.exe",
-);
-const WIN_STANDALONE_SOCKET = path.join(
-  app.getPath("home"),
-  "AppData/Local/CuaDriver/cua-driver.sock",
-);
+// The Windows build has no signed .app to attribute TCC grants to, so the
+// daemon is reached over the driver's own endpoint instead. `cua-driver`
+// installs itself under the user profile and listens on a fixed named pipe;
+// the endpoints below mirror that layout, with the installer's PATH shim as
+// a fallback for machines where the packages directory moved.
+const WIN_INSTALLED_DRIVERS = [
+  path.join(app.getPath("home"), ".cua-driver", "packages", "current", "cua-driver.exe"),
+  path.join(app.getPath("home"), "AppData", "Local", "Programs", "CuaDriver", "cua-driver.exe"),
+];
+// A named pipe is not a filesystem path: fs.existsSync always reports false
+// for it, so liveness must be probed with a connection, never a stat.
+const WIN_STANDALONE_SOCKET = "\\\\.\\pipe\\cua-driver";
 
 let embeddedHost = null; // EmbeddedCuaDriverHost | null
 let startupAbort = null;
@@ -129,6 +133,13 @@ function persistAndNotify(next) {
   return connection;
 }
 
+export function resolveWindowsDriver() {
+  for (const candidate of WIN_INSTALLED_DRIVERS) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 export function resolveDriverBinary() {
   if (process.env.CUA_DRIVER_PATH) return process.env.CUA_DRIVER_PATH;
   if (app.isPackaged) {
@@ -136,7 +147,7 @@ export function resolveDriverBinary() {
     if (fs.existsSync(bundled)) return bundled;
   }
   if (process.platform === "darwin" && fs.existsSync(INSTALLED_DRIVER)) return INSTALLED_DRIVER;
-  if (process.platform === "win32" && fs.existsSync(WIN_INSTALLED_DRIVER)) return WIN_INSTALLED_DRIVER;
+  if (process.platform === "win32") return resolveWindowsDriver();
   return null;
 }
 
@@ -148,7 +159,10 @@ function standaloneSocket() {
 
 function socketAlive(sockPath) {
   return new Promise((resolve) => {
-    if (!fs.existsSync(sockPath)) return resolve(false);
+    // A Windows named pipe never exists on disk, and a stale unix socket file
+    // can outlive its daemon. Connect first and let the OS answer, so liveness
+    // is never guessed from a path that may be meaningless or stale.
+    if (process.platform !== "win32" && !fs.existsSync(sockPath)) return resolve(false);
     const s = net.createConnection(sockPath);
     let timer;
     const done = (ok) => {
@@ -183,15 +197,15 @@ async function loadEmbeddedSdk() {
 
 async function attachStandalone(signal) {
   if (process.platform === "win32") {
-    const driver = fs.existsSync(WIN_INSTALLED_DRIVER) ? WIN_INSTALLED_DRIVER : null;
+    const driver = resolveWindowsDriver();
     if (!driver) return null;
     if (!(await socketAlive(WIN_STANDALONE_SOCKET))) {
       // Launch the daemon detached and let it own its lifetime: `serve` never
       // exits, so a timeout here would block this handler for its full
-      // duration and then kill the daemon it just started. Pin the socket
-      // path so the probe below checks the socket this launch was actually
-      // given, and ignore spawn errors — the probe reports them.
-      const child = spawn(driver, ["serve", "--socket", WIN_STANDALONE_SOCKET], {
+      // duration and then kill the daemon it just started. The driver picks
+      // its own fixed pipe, so the probe below waits for that same endpoint
+      // and spawn errors stay ignored — the probe reports them.
+      const child = spawn(driver, ["serve"], {
         detached: true,
         stdio: "ignore",
         windowsHide: true,
