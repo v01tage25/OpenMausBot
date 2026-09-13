@@ -4128,6 +4128,12 @@ bus.subscribe((event: RuntimeEvent) => {
           if (store.taskByThread(bot.id, event.threadId)?.activity !== "dead") {
             store.setTaskActivity(bot.id, event.threadId, "idle");
           }
+          // A card whose own thread just settled is closed with it. Without
+          // this a bot that failed mid-turn left its card saying "working"
+          // forever, because the run route only reports a failure to START.
+          if (settleBoardCardForThread(event.threadId, event.ok, event.stopReason)) {
+            broadcast({ kind: "task-board" });
+          }
           directTurnBots.delete(event.threadId);
           // Ordinary completion still drains from the existing bus subscribers.
           // An asynchronous screenshot finishes after those subscribers ran.
@@ -5971,6 +5977,20 @@ function routineRunBoardStatus(status: RoutineRunStatus): WorkStatus {
     case "missed":
       return "blocked";
   }
+}
+
+/** Close the board card whose own thread just settled.
+ *
+ * A card started by Run is marked in_progress at dispatch, and until this
+ * existed nothing closed it: the run route reports a failure to START, not a
+ * turn that started and then failed, so such a card sat in "In progress"
+ * indefinitely. Returns whether a card actually changed, so the caller only
+ * broadcasts when there is something new to see. */
+function settleBoardCardForThread(threadId: string, ok: boolean, stopReason?: string | null): boolean {
+  const card = workItems.byThread(threadId);
+  if (!card || card.status !== "in_progress") return false;
+  const settled = workItems.settle(card.id, { ok, reason: stopReason ?? null });
+  return Boolean(settled && settled.updatedAt !== card.updatedAt);
 }
 
 /** Put a routine run on the board as the card for its ROUTINE.
