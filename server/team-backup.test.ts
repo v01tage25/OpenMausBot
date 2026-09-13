@@ -208,6 +208,7 @@ describe("additive portable team backups", () => {
 
   it("rolls back fresh bots, rooms and transcripts after a late failure", () => {
     const { store, routines } = fixture();
+    const beforeSections = [...store.sections];
     const backup = createTeamBackup(store, routines.listRoutines(), "My team");
     const before = createTeamBackup(store, routines.listRoutines(), "My team");
     const write = vi.spyOn(routines, "create").mockImplementationOnce(() => { throw new Error("fixture disk failure"); });
@@ -215,6 +216,7 @@ describe("additive portable team backups", () => {
     write.mockRestore();
     const after = createTeamBackup(new Store(selection), routines.listRoutines(), "My team");
     expect({ ...after, exportedAt: 0 }).toEqual({ ...before, exportedAt: 0 });
+    expect(new Store(selection).sections).toEqual(beforeSections);
   });
 
   it("refuses to populate a thread that already has history", () => {
@@ -226,6 +228,7 @@ describe("additive portable team backups", () => {
 
   it("also rolls back a creation that throws before returning its new record", () => {
     const { store, routines } = fixture();
+    const beforeSections = [...store.sections];
     const backup = createTeamBackup(store, routines.listRoutines(), "My team");
     const before = structuredClone(store.bots);
     const create = store.createBot.bind(store);
@@ -237,6 +240,7 @@ describe("additive portable team backups", () => {
     fail.mockRestore();
     expect(store.bots).toEqual(before);
     expect(new Store(selection).bots.map((bot) => bot.id)).toEqual(before.map((bot) => bot.id));
+    expect(new Store(selection).sections).toEqual(beforeSections);
   });
 
   it("keeps case-distinct sections and their Chiefs separate", () => {

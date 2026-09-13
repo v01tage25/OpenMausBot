@@ -5,7 +5,7 @@ import { writeFileAtomic } from "./atomic.ts";
 
 const nodeSchema = z.object({
   id: z.string(), rootId: z.string(), parentId: z.string().optional(),
-  groupId: z.string(), threadId: z.string(), botId: z.string(),
+  groupId: z.string().optional(), threadId: z.string(), botId: z.string(),
   key: z.string(), text: z.string(), createdAt: z.number(),
   status: z.enum(["source", "queued", "running", "waiting", "resume", "completed", "failed", "cancelled"]),
   result: z.string().default(""), reported: z.boolean().default(false),
@@ -24,7 +24,7 @@ export interface RoomHandoffHooks {
   busy(node: RoomHandoff): boolean;
   run(node: RoomHandoff, resumed: boolean, signal: AbortSignal): Promise<{ ok: boolean; text: string }>;
   report(child: RoomHandoff, parent: RoomHandoff): void;
-  changed(groupIds: ReadonlySet<string>): void;
+  changed(groupIds: ReadonlySet<string>, directThreadIds: ReadonlySet<string>): void;
 }
 
 /** A bounded tree of addressed room turns. Waiting for children never holds a
@@ -59,7 +59,8 @@ export class RoomHandoffs {
   private save() { writeFileAtomic(this.file, JSON.stringify([...this.nodes.values()]), { mode: 0o600 }); }
   private publish(...nodes: RoomHandoff[]) {
     this.save();
-    this.hooks.changed(new Set(nodes.map(node => node.groupId)));
+    this.hooks.changed(new Set(nodes.flatMap(node => node.groupId ? [node.groupId] : [])),
+      new Set(nodes.filter(node => !node.groupId).map(node => node.threadId)));
   }
   children(id: string) { return [...this.nodes.values()].filter(n => n.parentId === id); }
   root(n: RoomHandoff) { return this.nodes.get(n.rootId)!; }
@@ -83,9 +84,9 @@ export class RoomHandoffs {
     }
     const fresh = !parent;
     parent ??= { ...source, id: generation, rootId: generation, key: "root", text: sourceText.slice(0, 12_000), createdAt: this.now(), status: "source", result: "", reported: true, executions: 0, approvalGranted: false, kind: "work" };
-    const kind = target.groupId === source.groupId ? "assignment" : "work";
+    const kind = target.groupId && target.groupId === source.groupId ? "assignment" : "work";
     const path = this.path(parent);
-    if (path.some(n => n.botId === target.botId && n.groupId === target.groupId)) {
+    if (path.some(n => n.botId === target.botId && (!n.groupId || !target.groupId || n.groupId === target.groupId))) {
       throw new Error("Cannot assign work back to an ancestor; results return automatically");
     }
     const existing = this.children(parent.id).find(n => n.key === key);
@@ -98,7 +99,7 @@ export class RoomHandoffs {
       n.groupId === target.groupId && n.botId === target.botId && n.status === "completed")) {
       throw new Error("This agent already completed your assignment. Do not send acknowledgements or approvals as new work. Finish with your decision; results return automatically. Only use rework=true for concrete additional work.");
     }
-    if (kind === "work" && path.some(n => n.groupId === target.groupId)) throw new Error("A room request cannot return to an ancestor room; results are returned automatically");
+    if (kind === "work" && target.groupId && path.some(n => n.groupId === target.groupId)) throw new Error("A room request cannot return to an ancestor room; results are returned automatically");
     // The path includes the source root, so its work-node count is the
     // proposed edge depth: four edges are allowed; the fifth is refused.
     if (kind === "work" && path.filter(n => n.kind === "work").length > ROOM_HANDOFF_LIMITS.depth) throw new Error("Room handoff depth limit reached");
@@ -144,6 +145,14 @@ export class RoomHandoffs {
     for (const n of this.nodes.values()) {
       if (n.groupId === groupId && (!threadId || n.threadId === threadId) && !terminal(n)) this.cancelTree(n, "Stopped by user");
     }
+  }
+  cancelDirect(threadId: string, reason = "Stopped by user") {
+    for (const n of this.nodes.values()) {
+      if (!n.groupId && n.threadId === threadId && !terminal(n)) this.cancelTree(n, reason);
+    }
+  }
+  activeDirect(threadId: string) {
+    return [...this.nodes.values()].some(n => !n.groupId && n.threadId === threadId && !terminal(n));
   }
 
   tick() {

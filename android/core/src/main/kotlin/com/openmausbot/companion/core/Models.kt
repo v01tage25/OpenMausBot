@@ -273,6 +273,10 @@ data class ThreadCloser(
     val at: Double,
 )
 
+/** A folder within one bot, in the order saved on the computer. */
+@Serializable
+data class BotProject(val id: String, val name: String, val emoji: String? = null)
+
 @Serializable
 data class BotTask(
     val threadId: String,
@@ -347,6 +351,7 @@ data class Bot(
     val messages: List<Message>? = null,
     val activeLeafId: String? = null,
     val hasMore: Boolean? = null,
+    val projects: List<BotProject>? = null,
 )
 
 /** Project only task-local controls; the original fleet record stays profile-global. */

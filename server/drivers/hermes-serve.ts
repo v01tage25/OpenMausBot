@@ -43,7 +43,7 @@ const HERMES_EFFORT_LEVELS = EFFORT_LEVELS.filter((level) =>
 
 const DEFAULT_MODELS: ModelCatalog = {
   default: "hermes-agent",
-  options: [{ id: "hermes-agent", label: "Hermes Agent (profile default)" }],
+  options: [{ id: "hermes-agent", label: "Hermes Agent (profile default)", custom: true }],
 };
 
 /** Per-thread live turn bookkeeping. runId is what the gateway's
@@ -594,7 +594,7 @@ export const HermesServeDriver: ProviderDriver<HermesServeConfig> = {
           if (!slug || slug === "moa") continue; // moa aggregates other providers
           for (const model of Array.isArray(p.models) ? p.models : []) {
             if (typeof model !== "string" || !model) continue;
-            options.push({ id: `${slug}:${model}`, label: `${model} · ${name}`, provider: slug });
+            options.push({ id: `${slug}:${model}`, label: `${model} · ${name}`, provider: slug, custom: true });
           }
         }
         if (options.length > 0) {

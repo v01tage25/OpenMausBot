@@ -19,8 +19,8 @@ import { getOrCreateChannel, mirrorExchange, type CommsBus } from "./comms-visib
 import { DATA_DIR } from "./config.ts";
 import { newId } from "./contracts.ts";
 import { requestPeerApproval, type ApprovalBus } from "./peer-approval.ts";
-import { peerAllowed } from "./peer-roster.ts";
-import { sectionKey, type BotRecord, type GroupRecord, type Message, type Store } from "./store.ts";
+import { canAccessTeam, peerAllowed } from "./peer-roster.ts";
+import { type BotRecord, type GroupRecord, type Message, type Store } from "./store.ts";
 
 export interface DelegationItem {
   toBotId: string;
@@ -845,8 +845,8 @@ function dropIfUnreachable(
   sourceThreadId: string,
   item: PendingDelegationItem,
 ): boolean {
-  const sectionsDiffer = sectionKey(sender.section) !== sectionKey(target.section);
-  if (!sectionsDiffer && peerAllowed(sender, target.id)) return false;
+  const sectionsDiffer = !canAccessTeam(sender, target.section);
+  if (!sectionsDiffer && !target.hidden && peerAllowed(sender, target.id)) return false;
   const reason = sectionsDiffer
     ? "bots now belong to different sections"
     : `@${target.name} is no longer an allowed peer`;

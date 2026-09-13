@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  canAccessTeam,
+  canReachPeer,
   peerAllowed,
   peerName,
   peerRosterSystemPrompt,
@@ -73,6 +75,27 @@ describe("peerAllowed", () => {
     // would never produce, to pin the fallback.
     const corrupt = { peers: "writer" } as unknown as { peers?: string[] };
     expect(peerAllowed(corrupt, "coder")).toBe(true);
+  });
+});
+
+describe("owner-granted cross-team coordination", () => {
+  const chief = { ...self, chiefOfStaff: true, managedSections: ["Personal"] };
+  it("lets Clive reach selected teams without elevating their specialists", () => {
+    expect(reachablePeers(fleet, chief).map(bot => bot.id)).toEqual(["writer", "coder", "elsewhere"]);
+    expect(canReachPeer(fleet[4]!, chief)).toBe(false);
+    expect(canAccessTeam(chief, "Finance")).toBe(false);
+    expect(canAccessTeam({ ...chief, chiefOfStaff: false }, "Personal")).toBe(false);
+  });
+  it("keeps explicit peer lists and hidden bots as additional restrictions", () => {
+    expect(reachablePeers(fleet, { ...chief, peers: ["elsewhere", "hidden"] }).map(bot => bot.id)).toEqual(["elsewhere"]);
+    expect(reachablePeers(fleet, { ...chief, peers: [] })).toEqual([]);
+    expect(canReachPeer(chief, chief)).toBe(false);
+  });
+  it("revokes access immediately and treats malformed saved grants as no grant", () => {
+    expect(canAccessTeam({ ...chief, managedSections: [] }, "Personal")).toBe(false);
+    expect(canAccessTeam({ ...chief, managedSections: "Personal" as unknown as string[] }, "Personal")).toBe(false);
+    expect(canAccessTeam({ ...chief, managedSections: [null] as unknown as string[] }, "Personal")).toBe(false);
+    expect(canAccessTeam({ ...chief, managedSections: [""] }, undefined)).toBe(true);
   });
 });
 
