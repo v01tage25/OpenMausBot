@@ -165,6 +165,22 @@ describe("settleInto", () => {
     );
   });
 
+  it("repairs a board that already had two columns on the same spot", () => {
+    // The bug this pins: the pass only checked collisions against the DROPPED
+    // column, so two columns that were already overlapping were both left
+    // alone and the pile survived. A layout saved before the rule existed, or
+    // a drag that never committed, can produce exactly that.
+    const boxes = defaultBoxes();
+    const stacked: Record<WorkColumn, ColumnBox> = {
+      ...boxes,
+      blocked: { ...boxes.blocked, x: 964 },
+      done: { ...boxes.done, x: 964 },
+    };
+    // A drop somewhere else entirely still tidies the board it was given.
+    const settled = settleInto("backlog", { ...boxes.backlog, x: 0, y: 900 }, stacked);
+    expect(noOverlaps(settled)).toBe(true);
+  });
+
   it("keeps every column a real box after a pile-up", () => {
     // Four columns dropped in the same place in turn. Each lands where it was
     // put — no refusal — and the ones it covered are re-seated rather than

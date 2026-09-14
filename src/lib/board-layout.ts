@@ -298,22 +298,28 @@ export function settleInto(
   boxes: Record<WorkColumn, ColumnBox>,
 ): Record<WorkColumn, ColumnBox> {
   const next: Record<WorkColumn, ColumnBox> = { ...boxes, [moved]: box };
+
+  // The dropped column holds its spot, then every other column is placed in
+  // turn. A column that does not collide with anything ALREADY PLACED keeps
+  // its position — which is most of them, most of the time — and one that
+  // does is re-seated.
+  //
+  // Note "already placed" rather than "the dropped column": an earlier version
+  // only checked against the dropped box, so a pair of columns that were
+  // already overlapping (from a layout saved before this rule existed, or a
+  // half-finished drag) were both left alone and the board kept its pile. The
+  // rule the board promises is "no two columns overlap", so the pass has to
+  // repair the board it was given, not just the part the drop touched.
   const placed: ColumnBox[] = [box];
-
-  // A column that the drop did not touch keeps its place, whatever the order.
-  const collided = WORK_COLUMNS.filter(
-    (column) => column !== moved && boxesOverlap(box, boxes[column]),
-  );
   for (const column of WORK_COLUMNS) {
-    if (column === moved || collided.includes(column)) continue;
-    placed.push(boxes[column]);
-  }
-
-  for (const column of collided) {
-    const own = boxes[column];
+    if (column === moved) continue;
+    const own = next[column];
+    if (!stillOverlaps(own, placed)) {
+      placed.push(own);
+      continue;
+    }
     // Search outward in rings for the nearest free seat, so a displaced column
-    // lands beside the dropped one rather than being flung to the far side of
-    // the board.
+    // lands beside the one that displaced it rather than across the board.
     const seat = nearestFreeSeat(own, box, placed);
     next[column] = seat;
     placed.push(seat);
@@ -323,15 +329,20 @@ export function settleInto(
 }
 
 /** The closest position to `own` that does not overlap anything in `placed`,
- * searched in rings around the column that displaced it. */
+ * searched in rings outward from where the column already is.
+ *
+ * The search is anchored on the column's OWN position, not the dropped one:
+ * a column that merely collided with another (rather than with the drop) moves
+ * the shortest distance that clears the board, instead of being dragged over
+ * to wherever the dropped column happens to sit. */
 function nearestFreeSeat(own: ColumnBox, front: ColumnBox, placed: ColumnBox[]): ColumnBox {
   const stepX = front.width + TIDY_GAP;
   const stepY = front.height + TIDY_GAP;
   if (!stillOverlaps(own, placed)) return own;
 
-  for (let ring = 1; ring <= 6; ring += 1) {
-    // Candidate seats around the dropped column, nearest ring first, ordered
-    // by distance so the closest free one wins.
+  for (let ring = 1; ring <= 8; ring += 1) {
+    // Candidate seats around the column's own place, nearest ring first,
+    // ordered by distance so the closest free one wins.
     const offsets: Array<[number, number]> = [];
     for (let dx = -ring; dx <= ring; dx += 1) {
       for (let dy = -ring; dy <= ring; dy += 1) {
@@ -343,8 +354,8 @@ function nearestFreeSeat(own: ColumnBox, front: ColumnBox, placed: ColumnBox[]):
 
     const seats = offsets.map(([dx, dy]) => ({
       ...own,
-      x: front.x + dx * stepX,
-      y: front.y + dy * stepY,
+      x: own.x + dx * stepX,
+      y: own.y + dy * stepY,
     }));
     const free = seats.find((seat) => !stillOverlaps(seat, placed));
     if (free) return free;
