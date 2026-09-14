@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 
 import { BotSelect, type BotSelectOption } from "./BotSelect";
+import { BriefMarkdown, hasMarkdownSyntax } from "./BriefMarkdown";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 
@@ -203,6 +204,19 @@ export function CardEditorDialog({ open, card, bots, onCancel, onSubmit }: CardE
             {/* The brief is not a note to self — it is the first thing the bot
                 is told, which is worth saying once, here. */}
             <span className="mt-1.5 block text-[11px] text-ink-secondary/75">{t("taskBoard.editor.briefHint")}</span>
+            {/* Formatting is typed, not clicked, so the syntax has to be
+                visible somewhere. This says it once and shows the result: a
+                hint nobody can check against their own text is a hint that
+                gets ignored. */}
+            <span className="mt-1 block text-[11px] text-ink-secondary/60">{t("taskBoard.editor.briefFormat")}</span>
+            {brief.trim() && hasMarkdownSyntax(brief) && (
+              <div className="mt-2 rounded-xl border border-hairline/40 bg-card/60 px-3 py-2">
+                <span className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.08em] text-ink-secondary/70">
+                  {t("taskBoard.editor.briefPreview")}
+                </span>
+                <BriefMarkdown text={brief} />
+              </div>
+            )}
           </label>
 
           <div className="mt-4">
