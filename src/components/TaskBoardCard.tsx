@@ -178,6 +178,12 @@ export function TaskBoardCardView({
           <span className="flex min-w-0 items-center gap-1.5">
             <BotAvatar
               bot={{ ...bot, mascotExpression: bot.mascotExpression ?? undefined } as never}
+              // Everywhere else in the app a bot that has just failed shows its
+              // alert face, because `stateForBot` reads the last message's
+              // activity. The card drew a plain resting face, so the one screen
+              // whose whole job is "which work needs attention" was the one
+              // place a failure did not show on the bot itself.
+              state={cardMark({ ...card, agent }) === "error" ? "alerting" : undefined}
               size={20}
               motion="none"
               motionKey={0}
