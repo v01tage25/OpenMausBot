@@ -13,6 +13,7 @@ import { CalendarClock, HelpCircle, Loader2, MessageCircle, Pencil, Play, Trash2
 import type { DragEvent } from "react";
 
 import { BotAvatar } from "./Avatar";
+import { BriefMarkdown } from "./BriefMarkdown";
 import { formatElapsed } from "@/lib/working-time";
 import { t } from "@/lib/i18n";
 import {
@@ -93,23 +94,27 @@ export function TaskBoardCardView({
       onDragEnd={onDragEnd}
       style={{ animationDelay: `${Math.min(appearIndex, 8) * 40}ms` }}
       className={cn(
-        "animate-rise group relative rounded-xl border bg-card px-4 py-3 shadow-sm transition",
-        // Only an error earns the red frame. A question and in-flight work get
-        // a left rail instead, so red keeps meaning one thing on this board.
-        mark === "error"
-          ? "border-danger/60 ring-1 ring-danger/25"
-          : "border-hairline/45",
-        dragging ? "opacity-50" : "hover:border-accent/30 hover:bg-raised/40",
+        "animate-rise group relative rounded-xl border border-hairline/45 bg-card px-4 py-3 shadow-sm transition",
+        // The Team map's hover, not the accent: a blue border on hover reads
+        // as "this card is selected", which is a different thing. Here it
+        // means only "the pointer is on this", so it stays neutral.
+        dragging ? "opacity-50" : "hover:border-ink-secondary/40 hover:bg-raised/40",
       )}
     >
       {/* A rail, not a repaint: the card stays legible while the state is
-          visible from across the board. */}
-      {mark !== "none" && mark !== "error" && (
+          visible from across the board.
+
+          An error used to get a red frame around the whole card as well.
+          Removed: the status chip already says "Needs attention" and the
+          reason sits in its own red box, so the frame only repeated them
+          louder. The rail keeps the at-a-glance signal without outlining
+          every failing card. */}
+      {mark !== "none" && (
         <span
           aria-hidden="true"
           className={cn(
-            "absolute left-0 top-3 bottom-3 w-[3px] rounded-r-full",
-            mark === "working" ? "bg-accent" : "bg-warning",
+            "absolute left-0 top-3 bottom-3 w-[2px] rounded-r-full",
+            mark === "error" ? "bg-danger" : mark === "working" ? "bg-accent" : "bg-warning",
           )}
         />
       )}
@@ -125,7 +130,12 @@ export function TaskBoardCardView({
             </h3>
           </div>
           {card.brief && (
-            <p className="mt-1 line-clamp-2 text-[11.5px] leading-relaxed text-ink-secondary">{card.brief}</p>
+            /* Clamped to two lines whatever the brief says, so a long one
+               cannot stretch a card down the column. A brief worth reading in
+               full is read in the editor. */
+            <div className="mt-1 line-clamp-2 overflow-hidden">
+              <BriefMarkdown text={card.brief} />
+            </div>
           )}
         </div>
         <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition focus-within:opacity-100 group-hover:opacity-100">
