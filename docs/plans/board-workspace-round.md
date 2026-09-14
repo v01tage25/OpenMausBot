@@ -1,27 +1,83 @@
 # Board workspace round: markdown briefs, canvas columns, rename, resize
 
-**Status:** agreed 2026-09-14, not yet built. This is the working checklist for the
-next round, so "what is still missing" has one answer in one place.
+**Status:** built, except the copywriter pass. Kept as the record of what was
+decided and why, so the reasoning is not only in commit messages.
 
-Supersedes nothing; extends `task-board-dates-multibot-todos.md`, which holds the
-still-unbuilt dates / multi-bot / checklist work.
+Extends `task-board-dates-multibot-todos.md`, which holds the still-unbuilt
+dates / multi-bot / checklist work.
 
 ---
 
-## Agreed decisions
+## Agreed decisions, and what actually shipped
 
-| # | Decision |
-|---|---|
-| 1 | **Markdown briefs, not a WYSIWYG editor.** The brief is stored as markdown and rendered with the existing `ChatMarkdown` (react-markdown + remark-gfm: bold, italics, lists, tables, code). No editor dependency is added, and the text the bot reads stays plain. |
-| 3 | **Canvas with collision rules (§A).** Columns live on a pannable/zoomable canvas like the Team map, but a drop that would intersect another column is refused — the Team map has no collision handling, so this is new work, not a port. |
-| 6 | **Columns resize, and it persists** (§B). Width and height are draggable and remembered. |
-| 3-ord | Default layout for a fresh board is the **current left-to-right order** (Backlog → To do → In progress → Blocked → Done → Cancelled), so nothing moves for an existing user. |
-| 4 | **Click a column title to rename**, persisted, with a discoverable affordance. |
-| 5 | **Restyle** cards and columns toward the Team map's look. |
-| 7 | Dead code audited and removed; **re-audit after this round** (user asked explicitly). |
-| 8 | **Copywriter pass on board titles/strings only** — friendly, human wording. No marketing gloss, no invented claims. English strings proposed for approval, then applied to all 9 locales. |
+| # | Decision | Outcome |
+|---|---|---|
+| 1 | **Markdown briefs, not a WYSIWYG editor.** Stored as markdown, rendered with react-markdown + remark-gfm. | **Done**, with its own small component rather than `ChatMarkdown` — the chat one drags in mention linking, thread refs and code chrome a card does not need. The editor shows the syntax and a live preview of what the bot will see. |
+| 3 | **Canvas columns**, no overlap. | **Done, but the rule changed twice — see below.** |
+| 6 | **Columns resize**, persisted. | **Done.** Width and height, with a corner grip so the gesture is discoverable. |
+| 3-ord | Default layout is the board's existing left-to-right order. | **Done.** Nothing moves for an existing viewer. |
+| 4 | **Click a column title to rename**, persisted, discoverable. | **Done**, plus a reset to the default name. |
+| 5 | **Restyle** toward the Team map. | **Done for columns and cards**: panel surfaces, hairlines, the Team map's neutral hover (not the accent), no focus ring on a held column. |
+| 7 | Dead code audited; **re-audit after the round**. | **Done twice.** First pass removed `teamOptions` and `isWorkOrigin`; the post-round pass removed four strings with no readers. |
+| 8 | **Copywriter pass on board strings.** | **Not done.** Waiting on approval — the proposal is below. |
 
 Explicitly **not** wanted: rich-text editor (§1), separate todo list (§1 of the other doc).
+
+---
+
+## The overlap rule: two corrections worth remembering
+
+The first design refused a drop that would land on another column. That was
+rejected in use — *"give it to him wherever he wants, don't show that you can't
+lay it out"* — because refusing fights the person: they aimed somewhere and the
+board said no without offering an alternative.
+
+The second design pushed neighbours out of the way **during** the drag. Also
+rejected: *"all the same, when dragging, the neighbouring stacks run away
+somewhere"*. A column rearranging the board while it is being carried makes
+every gesture move several things at once.
+
+**What shipped**, on the third try: a held column moves freely *over* the
+others (it lifts, nothing else shifts, nothing is written to storage), and the
+board tidies exactly once, on drop. The dropped column keeps the spot it was
+released on; anything it covered is re-seated at the nearest free place,
+searched in rings so a displaced column stays nearby instead of being flung
+across the board.
+
+Two follow-on defects found by looking at the live board, not the tests: a
+column could be dragged off-screen (now clamped, keeping enough visible to grab
+its header), and the settling pass only checked collisions against the dropped
+column, so a board that was *already* overlapping kept its pile. The pass now
+repairs the board it was given.
+
+## Where layout state lives — decided
+
+**Names, sizes and positions are all `localStorage`**, keyed by environment id
+(`omb-task-board-layout:<envId>`), matching the Team map. The user's call:
+personal browser customization, not shared content. Clearing site data costs an
+arrangement, not work.
+
+---
+
+## The copywriter proposal (needs approval before it is applied)
+
+The board's strings are already plain and specific, which is good product
+writing — the aim here is wording, not marketing gloss. Proposed changes, with
+the reasoning:
+
+| Current | Proposed | Why |
+|---|---|---|
+| "Ready" (To do column) | "To do" | The column is *named* To do in the header but its status chip says "Ready", so one column has two names. |
+| "Not started" (Backlog chip) | "Backlog" | Same problem: the header says Backlog, the chip says Not started. |
+| "What needs doing?" | "What needs doing?" | Keep — it is good. |
+| "Assign a bot to start this card" | "Pick a bot to start this" | Shorter, and "pick" matches the picker that replaced the dropdown. |
+| "The bot asked a question — open the chat to answer" | "Waiting on your answer — open the chat" | Leads with the state, not the event. |
+| "A board of work, one card at a time. Your bots stay where they are — a card only points at the chat a job runs in." | Keep, maybe split | Accurate and human; only the second sentence is dense. |
+| "Columns cannot overlap" | *(removed)* | No longer possible to produce. |
+
+Two things I am **not** proposing to change: "Nothing runs on its own" (it earns
+its place by answering the obvious first worry) and any status that names a real
+backend state (`auth_required`), since renaming those would hide what happened.
 
 ---
 
@@ -36,18 +92,9 @@ Explicitly **not** wanted: rich-text editor (§1), separate todo list (§1 of th
 - A failed card's bot shows its **alert face**, like everywhere else in the app.
 - Two dead helpers removed (`teamOptions`, `isWorkOrigin`).
 
-## Still to build (this round)
+## Still to do in this round
 
-1. Markdown rendering for the brief (card + editor), with a small formatting hint in
-   the editor so the syntax is discoverable.
-2. Canvas columns: pan/zoom, drag to place, **intersection refused**, order preserved on
-   first run. Positions persist.
-3. Resizable columns: width + height by dragging an edge, persisted.
-4. Rename a column by clicking its title; persisted; visible affordance (pencil on hover).
-5. Restyle cards/columns toward the Team map (`rounded-2xl`, `bg-panel/90`, `shadow-sm`,
-   hairline borders).
-6. Copywriter pass on strings (proposal first).
-7. Re-audit for dead code after the above.
+1. **Copywriter pass** — the proposal above, waiting on approval.
 
 ## Still to build (from the earlier doc, unchanged)
 
@@ -55,20 +102,3 @@ Explicitly **not** wanted: rich-text editor (§1), separate todo list (§1 of th
 - `dueAt` (display-only) and `runAt` armed by the To-do column.
 - Multi-bot assignment → group chat, including the open question about whether a
   card's room is visible in the sidebar.
-
----
-
-## Where layout state should live — needs one decision
-
-The Team map keeps positions in **localStorage** keyed by environment id
-(`omb-team-canvas:<id>`), so layout is per-browser. Column names and sizes are
-different in kind: a **name** is content (everyone should see "Blocked" renamed),
-while a **size** is arguably preference.
-
-Recommendation:
-- **Names → server**, on the board record alongside the cards, so a rename is shared and
-  survives a cache clear.
-- **Sizes/positions → localStorage first** (matching the Team map, no migration), with a
-  note that moving them server-side later is a small change.
-
-This is the one thing worth confirming before the canvas work starts.
