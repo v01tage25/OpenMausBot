@@ -2158,5 +2158,15 @@
   "taskBoard.empty.sample1": "Draft the weekly update",
   "taskBoard.empty.sample2": "Tidy the inbox",
   "taskBoard.empty.sample3": "Check the numbers",
-  "taskBoard.back": "Back"
+  "taskBoard.back": "Back",
+  "taskBoard.column.renameHint": "Click to rename this column",
+  "taskBoard.column.rename": "Rename column {name}",
+  "taskBoard.column.renameField": "Column name",
+  "taskBoard.column.renameSave": "Save name",
+  "taskBoard.column.renameCancel": "Cancel renaming",
+  "taskBoard.column.resize": "Resize column {name}",
+  "taskBoard.canvas.zoomIn": "Zoom in",
+  "taskBoard.canvas.zoomOut": "Zoom out",
+  "taskBoard.canvas.fit": "Fit the board to the window",
+  "taskBoard.canvas.overlap": "Columns cannot overlap"
 }

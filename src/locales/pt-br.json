@@ -1396,5 +1396,15 @@
   "taskBoard.empty.sample1": "Redigir a atualização semanal",
   "taskBoard.empty.sample2": "Organizar a caixa de entrada",
   "taskBoard.empty.sample3": "Conferir os números",
-  "taskBoard.back": "Voltar"
+  "taskBoard.back": "Voltar",
+  "taskBoard.column.renameHint": "Clique para renomear esta coluna",
+  "taskBoard.column.rename": "Renomear coluna {name}",
+  "taskBoard.column.renameField": "Nome da coluna",
+  "taskBoard.column.renameSave": "Salvar nome",
+  "taskBoard.column.renameCancel": "Cancelar renomeação",
+  "taskBoard.column.resize": "Redimensionar coluna {name}",
+  "taskBoard.canvas.zoomIn": "Ampliar",
+  "taskBoard.canvas.zoomOut": "Reduzir",
+  "taskBoard.canvas.fit": "Ajustar o quadro à janela",
+  "taskBoard.canvas.overlap": "As colunas não podem se sobrepor"
 }

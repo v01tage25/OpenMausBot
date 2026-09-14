@@ -1390,5 +1390,15 @@
   "taskBoard.empty.sample1": "Redactar la actualización semanal",
   "taskBoard.empty.sample2": "Ordenar la bandeja de entrada",
   "taskBoard.empty.sample3": "Revisar los números",
-  "taskBoard.back": "Atrás"
+  "taskBoard.back": "Atrás",
+  "taskBoard.column.renameHint": "Haz clic para renombrar esta columna",
+  "taskBoard.column.rename": "Renombrar columna {name}",
+  "taskBoard.column.renameField": "Nombre de la columna",
+  "taskBoard.column.renameSave": "Guardar nombre",
+  "taskBoard.column.renameCancel": "Cancelar el cambio de nombre",
+  "taskBoard.column.resize": "Cambiar el tamaño de la columna {name}",
+  "taskBoard.canvas.zoomIn": "Acercar",
+  "taskBoard.canvas.zoomOut": "Alejar",
+  "taskBoard.canvas.fit": "Ajustar el tablero a la ventana",
+  "taskBoard.canvas.overlap": "Las columnas no pueden superponerse"
 }

@@ -1390,5 +1390,15 @@
   "taskBoard.empty.sample1": "Rédiger la mise à jour hebdomadaire",
   "taskBoard.empty.sample2": "Ranger la boîte de réception",
   "taskBoard.empty.sample3": "Vérifier les chiffres",
-  "taskBoard.back": "Retour"
+  "taskBoard.back": "Retour",
+  "taskBoard.column.renameHint": "Cliquez pour renommer cette colonne",
+  "taskBoard.column.rename": "Renommer la colonne {name}",
+  "taskBoard.column.renameField": "Nom de la colonne",
+  "taskBoard.column.renameSave": "Enregistrer le nom",
+  "taskBoard.column.renameCancel": "Annuler le renommage",
+  "taskBoard.column.resize": "Redimensionner la colonne {name}",
+  "taskBoard.canvas.zoomIn": "Zoom avant",
+  "taskBoard.canvas.zoomOut": "Zoom arrière",
+  "taskBoard.canvas.fit": "Ajuster le tableau à la fenêtre",
+  "taskBoard.canvas.overlap": "Les colonnes ne peuvent pas se chevaucher"
 }

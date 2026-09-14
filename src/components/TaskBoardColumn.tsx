@@ -1,40 +1,91 @@
-// One column of the board, and the drop target for cards dragged onto it.
+// One column of the board: a positioned, resizable window onto a status, and
+// the drop target for cards dragged onto it.
 //
 // Dropping a card moves it; it never starts it. That is the whole reason this
 // component exists separately from the card: an agent that began working the
-// moment a card was dragged into "In progress" would be work nobody asked
-// for, triggered by a gesture that can happen by accident.
+// moment a card was dragged into "In progress" would be work nobody asked for,
+// triggered by a gesture that can happen by accident.
 //
 // A drop writes the same PATCH any other edit writes. The new order is one
 // number placed between its neighbours, so the rest of the column is not
 // renumbered and two people dragging at once do not fight over a whole list.
-import { useState, type DragEvent } from "react";
+//
+// The column is placed by the canvas rather than by a grid, so it is given an
+// absolute box. Two gestures live here and they are deliberately different:
+// dragging the column's HEADER moves the window, dragging the card area moves
+// CARDS. Nothing moves a card by grabbing the column, which is what stops an
+// accidental drag from rearranging work.
+import { useEffect, useRef, useState, type DragEvent } from "react";
+import { Check, Pencil, X } from "lucide-react";
 
 import { TaskBoardCardView } from "./TaskBoardCard";
 import { CARD_DRAG_TYPE, type TaskBoardCardProps } from "./TaskBoardCard";
 import { t } from "@/lib/i18n";
-import type { BoardCard } from "@/lib/task-board";
+import type { BoardCard, WorkColumn } from "@/lib/task-board";
 import { cn } from "@/lib/cn";
+import {
+  resizeBox,
+  type ColumnBox,
+  type ResizeEdge,
+} from "@/lib/board-layout";
 
 export interface TaskBoardColumnProps {
+  column: WorkColumn;
   title: string;
   /** Shown in the header. Passed in rather than counted here, because the
    * header must agree with the list the page actually handed over — including
    * when a card arrives from another column mid-render. */
   count: number;
+  box: ColumnBox;
   cards: BoardCard[];
   renderCard: (card: BoardCard) => Omit<TaskBoardCardProps, "card">;
   onDrop: (cardId: string, beforeId: string | null) => void;
+  /** Move the column. The canvas decides whether the drop is allowed, so this
+   * is a request, not a commit. */
+  onMove: (column: WorkColumn, box: ColumnBox) => void;
+  onResize: (column: WorkColumn, box: ColumnBox) => void;
+  onRename: (column: WorkColumn, name: string | null) => void;
+  /** True while this column is the one being dragged, so the canvas can lift
+   * it and the column can dim itself. */
+  moving?: boolean;
 }
 
+/** How far a pointer must travel before it counts as a drag. A click on the
+ * header is often the start of a rename, and a column that shifted a pixel
+ * under every click would be infuriating to arrange. */
+const DRAG_THRESHOLD = 4;
+
+/** The edge handles, and which way each one grows the box. */
+const HANDLES: Array<{ edge: ResizeEdge; className: string; cursor: string }> = [
+  { edge: "left", className: "left-0 top-3 bottom-3 w-1.5", cursor: "ew-resize" },
+  { edge: "right", className: "right-0 top-3 bottom-3 w-1.5", cursor: "ew-resize" },
+  { edge: "top", className: "top-0 left-3 right-3 h-1.5", cursor: "ns-resize" },
+  { edge: "bottom", className: "bottom-0 left-3 right-3 h-1.5", cursor: "ns-resize" },
+  { edge: "corner", className: "bottom-0 right-0 size-3.5", cursor: "nwse-resize" },
+];
+
 export function TaskBoardColumn({
+  column,
   title,
   count,
+  box,
   cards,
   renderCard,
   onDrop,
+  onMove,
+  onResize,
+  onRename,
+  moving = false,
 }: TaskBoardColumnProps) {
   const [over, setOver] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState(title);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const gesture = useRef<
+    | { kind: "move"; startX: number; startY: number; box: ColumnBox; moved?: boolean }
+    | { kind: "resize"; edge: ResizeEdge; startX: number; startY: number; box: ColumnBox; moved?: boolean }
+    | null
+  >(null);
 
   /** Whether a drag carries one of THIS board's cards. A sidebar folder uses
    * its own type, and must not be treated as a card just because it is being
@@ -59,26 +110,162 @@ export function TaskBoardColumn({
     if (cardId) onDrop(cardId, beforeId);
   };
 
+  /** Focus and select the whole name when renaming starts, the way renaming
+   * anywhere else in the app does. */
+  useEffect(() => {
+    if (!renaming) return;
+    nameRef.current?.focus();
+    nameRef.current?.select();
+  }, [renaming]);
+
+  const beginRename = () => {
+    setDraft(title);
+    setRenaming(true);
+  };
+
+  const commitRename = () => {
+    const next = draft.trim();
+    setRenaming(false);
+    // An empty name is not a name: it falls back to the app's label rather
+    // than leaving the column nameless.
+    onRename(column, next && next !== title ? next : null);
+  };
+
+  /** Pointer gestures for moving and resizing, so both share one shape and one
+   * cancel path. */
+  const startGesture = (
+    event: React.PointerEvent,
+    next: NonNullable<typeof gesture.current>,
+  ) => {
+    // A gesture that starts on a button is the button's, not the column's.
+    if ((event.target as HTMLElement).closest("button, input, [draggable=true]")) return;
+    if (event.button !== 0) return;
+    gesture.current = next;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const onPointerMove = (event: React.PointerEvent) => {
+    const active = gesture.current;
+    if (!active) return;
+    const dx = event.clientX - active.startX;
+    const dy = event.clientY - active.startY;
+    // A click on the header is a click, not a one-pixel move. Without this
+    // threshold every attempt to rename a column would also shove it.
+    if (!active.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+    active.moved = true;
+    if (active.kind === "move") {
+      onMove(column, { ...active.box, x: active.box.x + dx, y: active.box.y + dy });
+    } else {
+      // The resize maths lives in the pure lib, so a dragged edge is testable
+      // without a browser.
+      onResize(column, resizeBox(active.box, active.edge, dx, dy));
+    }
+  };
+
+  const endGesture = (event: React.PointerEvent) => {
+    if (!gesture.current) return;
+    gesture.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const widthPx = Math.round(box.width);
+  const heightPx = Math.round(box.height);
+
   return (
     <section
       onDragOver={handleOver}
       onDragLeave={() => setOver(false)}
       onDrop={(event) => handleDrop(event, null)}
+      style={{ left: box.x, top: box.y, width: widthPx, height: heightPx }}
       className={cn(
-        // Width comes from the grid that lays the columns out, never from a
-        // fixed size here: a column that insisted on 268px pushed the last
-        // ones past the window edge with no way to reach them.
-        "flex min-h-0 min-w-0 flex-col rounded-2xl border bg-panel/60 p-2.5 transition",
-        over ? "border-accent/45 bg-accent/5" : "border-hairline/40",
+        // The Team map's tile language: a panel surface, a hairline, a soft
+        // shadow, and the accent only when something is happening to it.
+        "absolute flex flex-col rounded-2xl border bg-panel/90 shadow-sm transition-colors",
+        over ? "border-accent/50 bg-accent/5" : "border-hairline/50",
+        moving && "opacity-40",
       )}
       aria-label={title}
+      data-column={column}
     >
-      <header className="mb-2 flex items-center justify-between px-1.5">
-        <h2 className="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-secondary">{title}</h2>
-        <span className="shrink-0 text-[10.5px] tabular-nums text-ink-secondary/70">{count}</span>
+      {/* Header. This is the move handle: a column is rearranged by its title,
+          never by the cards inside it. */}
+      <header
+        onPointerDown={(event) =>
+          startGesture(event, { kind: "move", startX: event.clientX, startY: event.clientY, box })
+        }
+        onPointerMove={onPointerMove}
+        onPointerUp={endGesture}
+        onPointerCancel={endGesture}
+        className="flex h-11 shrink-0 cursor-grab touch-none items-center justify-between gap-2 px-3 active:cursor-grabbing"
+      >
+        {renaming ? (
+          <span className="flex min-w-0 flex-1 items-center gap-1">
+            <input
+              ref={nameRef}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  commitRename();
+                } else if (event.key === "Escape") {
+                  event.preventDefault();
+                  setRenaming(false);
+                }
+              }}
+              maxLength={40}
+              aria-label={t("taskBoard.column.renameField")}
+              className="min-w-0 flex-1 rounded-md border border-accent/50 bg-card px-1.5 py-1 text-[12px] font-semibold text-ink outline-none"
+            />
+            <button
+              type="button"
+              onClick={commitRename}
+              aria-label={t("taskBoard.column.renameSave")}
+              className="rounded-md p-1 text-accent hover:bg-raised"
+            >
+              <Check size={13} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setRenaming(false)}
+              aria-label={t("taskBoard.column.renameCancel")}
+              className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+            >
+              <X size={13} />
+            </button>
+          </span>
+        ) : (
+          <>
+            {/* The title is the rename affordance: clicking it is the whole
+                gesture, and the pencil only appears on hover so the header
+                stays calm. It is a real button, so keyboard users reach it
+                too — a rename that only works on hover is a rename half the
+                people cannot find. */}
+            <button
+              type="button"
+              onDoubleClick={beginRename}
+              onClick={beginRename}
+              title={t("taskBoard.column.renameHint")}
+              aria-label={t("taskBoard.column.rename", { name: title })}
+              className="group/name flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 text-left hover:bg-raised/60"
+            >
+              <span className="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-secondary">
+                {title}
+              </span>
+              <Pencil
+                size={10}
+                className="shrink-0 text-ink-secondary/40 opacity-0 transition group-hover/name:opacity-100"
+                aria-hidden="true"
+              />
+            </button>
+            <span className="shrink-0 text-[10.5px] tabular-nums text-ink-secondary/70">{count}</span>
+          </>
+        )}
       </header>
 
-      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-0.5 pb-1">
+      <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 pb-2">
         {cards.length === 0 && (
           <p className="px-2 py-6 text-center text-[11px] text-ink-secondary/55">{t("taskBoard.emptyColumn")}</p>
         )}
@@ -102,6 +289,24 @@ export function TaskBoardColumn({
           </div>
         ))}
       </div>
+
+      {/* Resize edges. Each is a thin strip inside the column's own border so
+          it never overlaps a neighbour's hit area. */}
+      {HANDLES.map(({ edge, className, cursor }) => (
+        <span
+          key={edge}
+          role="separator"
+          aria-label={t("taskBoard.column.resize", { name: title })}
+          onPointerDown={(event) =>
+            startGesture(event, { kind: "resize", edge, startX: event.clientX, startY: event.clientY, box })
+          }
+          onPointerMove={onPointerMove}
+          onPointerUp={endGesture}
+          onPointerCancel={endGesture}
+          style={{ cursor, touchAction: "none" }}
+          className={cn("absolute z-10", className)}
+        />
+      ))}
     </section>
   );
 }

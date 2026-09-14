@@ -12,12 +12,14 @@
 import { useCallback, useEffect, useMemo, useState, type DragEvent } from "react";
 import { ArrowLeft, Columns3, LayoutGrid, Plus, RefreshCw, Trash2, X } from "lucide-react";
 
+import { BoardCanvas } from "./BoardCanvas";
 import { TaskBoardColumn } from "./TaskBoardColumn";
 import { CARD_DRAG_TYPE } from "./TaskBoardCard";
 import { CardEditorDialog, type CardDraft } from "./CardEditorDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { api, useStore } from "@/state/store";
 import { t } from "@/lib/i18n";
+import { columnTitle } from "@/lib/board-layout";
 import {
   WORK_COLUMNS,
   columnsOf,
@@ -434,9 +436,13 @@ export function TaskBoardPage({ onBack }: { onBack?: () => void } = {}) {
         ))}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-7 sm:py-6">
+      {/* The canvas fills the pane and pans itself, so it must not sit inside
+          a scrolling box — a scroll container and a pan gesture fight over
+          the same wheel events. The loading and empty states still want
+          padding, so they keep their own wrapper below. */}
+      <div className="flex min-h-0 flex-1 flex-col">
         {error && (
-          <div className="mb-4 flex items-start justify-between gap-3 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-[12px] text-danger">
+          <div className="mx-5 mt-4 flex items-start justify-between gap-3 rounded-xl border border-danger/30 bg-danger/10 px-3 py-2 text-[12px] text-danger sm:mx-7">
             <span>{error}</span>
             <button type="button" onClick={() => setError(null)} aria-label={t("taskBoard.retry")}>
               <X size={13} />
@@ -445,44 +451,53 @@ export function TaskBoardPage({ onBack }: { onBack?: () => void } = {}) {
         )}
 
         {loading && cards.length === 0 ? (
-          <BoardSkeleton />
-        ) : visible.length === 0 ? (
-          <BoardEmptyState onCreate={() => setEditorTarget("new")} />
-        ) : (
-          /* The board scrolls inside its own pane. It used to size each column
-             to a fixed width and let the row run past the window, which put
-             the last columns off-screen with nothing to drag them back.
-             A container query, not a viewport one: the sidebar is gone on
-             this screen but the pane can still be narrow, so what matters is
-             how much room the board itself was given.
-             Six across needs ~1900px because a card below ~240px truncates
-             its own title, which is the one thing a card must always show. */
-          <div className="@container">
-            <div className="grid grid-cols-1 items-start gap-3 @2xl:grid-cols-2 @4xl:grid-cols-3 @7xl:grid-cols-4 min-[1560px]:grid-cols-6">
-              {WORK_COLUMNS.map((status) => (
-                <TaskBoardColumn
-                  key={status}
-                  title={columnLabel(status)}
-                  count={columns[status].length}
-                  cards={columns[status]}
-                  onDrop={(cardId, beforeId) => void handleDrop(status, cardId, beforeId)}
-                  renderCard={(card) => ({
-                    bot: card.ownerBotId ? botById.get(card.ownerBotId) ?? null : null,
-                    agent: card.agent,
-                    running: runningIds.has(card.id),
-                    onRun: (target) => void run(target),
-                    onStop: (target) => void stop(target),
-                    onEdit: (target) => setEditorTarget(target),
-                    onDelete: (target) => setPendingDelete(target),
-                    onOpenChat: openChat,
-                    onDragStart: handleDragStart,
-                    onDragEnd: dragEnd,
-                    dragging: draggingId === card.id,
-                  })}
-                />
-              ))}
-            </div>
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-7 sm:py-6">
+            <BoardSkeleton />
           </div>
+        ) : visible.length === 0 ? (
+          <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-7 sm:py-6">
+            <BoardEmptyState onCreate={() => setEditorTarget("new")} />
+          </div>
+        ) : (
+          /* The board's columns live on a canvas: each one is a window the viewer can
+             move and resize, and the arrangement is remembered in this browser.
+             The canvas refuses a drop that would land one column on another —
+             a board is read at a glance, and a column half-hidden under its
+             neighbour is work nobody sees. */
+          <BoardCanvas>
+            {(boxes, canvas) => (
+              <>
+                {WORK_COLUMNS.map((status) => (
+                  <TaskBoardColumn
+                    key={status}
+                    column={status}
+                    title={columnTitle(status, canvas.names, columnLabel)}
+                    count={columns[status].length}
+                    box={boxes[status]}
+                    cards={columns[status]}
+                    moving={canvas.moving === status}
+                    onMove={canvas.move}
+                    onResize={canvas.resize}
+                    onRename={canvas.rename}
+                    onDrop={(cardId, beforeId) => void handleDrop(status, cardId, beforeId)}
+                    renderCard={(card) => ({
+                      bot: card.ownerBotId ? botById.get(card.ownerBotId) ?? null : null,
+                      agent: card.agent,
+                      running: runningIds.has(card.id),
+                      onRun: (target) => void run(target),
+                      onStop: (target) => void stop(target),
+                      onEdit: (target) => setEditorTarget(target),
+                      onDelete: (target) => setPendingDelete(target),
+                      onOpenChat: openChat,
+                      onDragStart: handleDragStart,
+                      onDragEnd: dragEnd,
+                      dragging: draggingId === card.id,
+                    })}
+                  />
+                ))}
+              </>
+            )}
+          </BoardCanvas>
         )}
       </div>
 

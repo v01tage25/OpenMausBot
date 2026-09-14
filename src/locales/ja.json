@@ -1390,5 +1390,15 @@
   "taskBoard.empty.sample1": "週次アップデートの下書き",
   "taskBoard.empty.sample2": "受信トレイを整理",
   "taskBoard.empty.sample3": "数字を確認",
-  "taskBoard.back": "戻る"
+  "taskBoard.back": "戻る",
+  "taskBoard.column.renameHint": "クリックして列の名前を変更",
+  "taskBoard.column.rename": "列 {name} の名前を変更",
+  "taskBoard.column.renameField": "列の名前",
+  "taskBoard.column.renameSave": "名前を保存",
+  "taskBoard.column.renameCancel": "名前の変更を中止",
+  "taskBoard.column.resize": "列 {name} のサイズを変更",
+  "taskBoard.canvas.zoomIn": "拡大",
+  "taskBoard.canvas.zoomOut": "縮小",
+  "taskBoard.canvas.fit": "ボードをウィンドウに合わせる",
+  "taskBoard.canvas.overlap": "列は重ねられません"
 }

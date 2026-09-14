@@ -2036,5 +2036,15 @@
   "taskBoard.empty.sample1": "Скласти тижневий звіт",
   "taskBoard.empty.sample2": "Розібрати пошту",
   "taskBoard.empty.sample3": "Перевірити цифри",
-  "taskBoard.back": "Назад"
+  "taskBoard.back": "Назад",
+  "taskBoard.column.renameHint": "Натисніть, щоб перейменувати стовпчик",
+  "taskBoard.column.rename": "Перейменувати стовпчик {name}",
+  "taskBoard.column.renameField": "Назва стовпчика",
+  "taskBoard.column.renameSave": "Зберегти назву",
+  "taskBoard.column.renameCancel": "Скасувати перейменування",
+  "taskBoard.column.resize": "Змінити розмір стовпчика {name}",
+  "taskBoard.canvas.zoomIn": "Наблизити",
+  "taskBoard.canvas.zoomOut": "Віддалити",
+  "taskBoard.canvas.fit": "Показати дошку цілком",
+  "taskBoard.canvas.overlap": "Стовпчики не можуть перекриватися"
 }

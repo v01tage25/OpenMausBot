@@ -1390,5 +1390,15 @@
   "taskBoard.empty.sample1": "Wöchentliches Update entwerfen",
   "taskBoard.empty.sample2": "Posteingang aufräumen",
   "taskBoard.empty.sample3": "Zahlen prüfen",
-  "taskBoard.back": "Zurück"
+  "taskBoard.back": "Zurück",
+  "taskBoard.column.renameHint": "Zum Umbenennen klicken",
+  "taskBoard.column.rename": "Spalte {name} umbenennen",
+  "taskBoard.column.renameField": "Spaltenname",
+  "taskBoard.column.renameSave": "Namen speichern",
+  "taskBoard.column.renameCancel": "Umbenennen abbrechen",
+  "taskBoard.column.resize": "Spalte {name} skalieren",
+  "taskBoard.canvas.zoomIn": "Vergrößern",
+  "taskBoard.canvas.zoomOut": "Verkleinern",
+  "taskBoard.canvas.fit": "Board einpassen",
+  "taskBoard.canvas.overlap": "Spalten dürfen sich nicht überlappen"
 }

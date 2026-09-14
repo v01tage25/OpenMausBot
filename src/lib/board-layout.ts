@@ -173,7 +173,8 @@ export function parseLayout(raw: string | null): BoardLayout {
 /** Fill a saved layout out to a complete board: every column has a box, and
  * any the viewer never moved keeps its default place. */
 export function resolveBoxes(saved: Partial<Record<WorkColumn, ColumnBox>> | undefined): Record<WorkColumn, ColumnBox> {
-  return { ...defaultBoxes(), ...(saved ?? {}) };
+  // Spreading `undefined` adds nothing, so no fallback is needed.
+  return { ...defaultBoxes(), ...saved };
 }
 
 /** A column's title: the viewer's own name for it if they set one, otherwise

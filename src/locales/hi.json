@@ -1390,5 +1390,15 @@
   "taskBoard.empty.sample1": "साप्ताहिक अपडेट का मसौदा",
   "taskBoard.empty.sample2": "इनबॉक्स व्यवस्थित करें",
   "taskBoard.empty.sample3": "आँकड़े जाँचें",
-  "taskBoard.back": "वापस"
+  "taskBoard.back": "वापस",
+  "taskBoard.column.renameHint": "इस स्तंभ का नाम बदलने के लिए क्लिक करें",
+  "taskBoard.column.rename": "स्तंभ {name} का नाम बदलें",
+  "taskBoard.column.renameField": "स्तंभ का नाम",
+  "taskBoard.column.renameSave": "नाम सहेजें",
+  "taskBoard.column.renameCancel": "नाम बदलना रद्द करें",
+  "taskBoard.column.resize": "स्तंभ {name} का आकार बदलें",
+  "taskBoard.canvas.zoomIn": "ज़ूम इन",
+  "taskBoard.canvas.zoomOut": "ज़ूम आउट",
+  "taskBoard.canvas.fit": "बोर्ड को विंडो में फ़िट करें",
+  "taskBoard.canvas.overlap": "स्तंभ एक-दूसरे पर नहीं आ सकते"
 }

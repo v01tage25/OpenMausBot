@@ -1941,5 +1941,15 @@
   "taskBoard.empty.sample1": "撰寫每週更新",
   "taskBoard.empty.sample2": "整理收件匣",
   "taskBoard.empty.sample3": "核對數字",
-  "taskBoard.back": "返回"
+  "taskBoard.back": "返回",
+  "taskBoard.column.renameHint": "點擊可重新命名此欄",
+  "taskBoard.column.rename": "重新命名欄 {name}",
+  "taskBoard.column.renameField": "欄名稱",
+  "taskBoard.column.renameSave": "儲存名稱",
+  "taskBoard.column.renameCancel": "取消重新命名",
+  "taskBoard.column.resize": "調整欄 {name} 大小",
+  "taskBoard.canvas.zoomIn": "放大",
+  "taskBoard.canvas.zoomOut": "縮小",
+  "taskBoard.canvas.fit": "將看板符合視窗",
+  "taskBoard.canvas.overlap": "欄位不可重疊"
 }
