@@ -204,22 +204,6 @@ export function stopAvailability(card: BoardCard): boolean {
   return Boolean(card.threadId) && Boolean(card.agent);
 }
 
-/** The teams a switcher shows, derived from the cards rather than a second
- * request. The unsectioned team is always offered — it is where a bot lands
- * when nobody filed it, so it must be reachable even while it is empty. */
-export function teamOptions(cards: BoardCard[]): Array<{ key: string; label: string; count: number }> {
-  const counts = new Map<string, number>();
-  for (const card of cards) {
-    const key = cardSection(card);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
-  }
-  const named = [...counts]
-    .filter(([key]) => key !== "")
-    .map(([key, count]) => ({ key, label: key, count }))
-    .sort((a, b) => a.label.localeCompare(b.label));
-  return [{ key: "", label: t("taskBoard.team.general"), count: counts.get("") ?? 0 }, ...named];
-}
-
 /** How long the card's run took, or has been running for so far.
  *
  * Two real bugs lived in the previous version. It kept counting after the

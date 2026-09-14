@@ -94,10 +94,6 @@ export function isWorkStatus(value: unknown): value is WorkStatus {
   return typeof value === "string" && (WORK_STATUSES as readonly string[]).includes(value);
 }
 
-export function isWorkOrigin(value: unknown): value is WorkOrigin {
-  return value === "manual" || value === "routine";
-}
-
 /** The default board. Cards created before boards were a concept, and every
  * card a client creates without naming one, belong here. */
 export const DEFAULT_BOARD_ID = "default";

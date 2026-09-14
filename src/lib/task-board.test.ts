@@ -22,7 +22,6 @@ import {
   runIsLive,
   statusTone,
   stopAvailability,
-  teamOptions,
   type BoardCard,
 } from "./task-board";
 
@@ -199,29 +198,6 @@ describe("stopAvailability", () => {
     // work, so the button stays off until there is a thread to name.
     expect(stopAvailability(owned("Alpha"))).toBe(false);
     expect(stopAvailability(owned("Alpha", { threadId: "thread-1" }))).toBe(true);
-  });
-});
-
-describe("teamOptions", () => {
-  it("always offers the unsectioned team, even when empty", () => {
-    // It is where a bot lands when nobody filed it, so it must be reachable.
-    const teams = teamOptions([]);
-    expect(teams).toHaveLength(1);
-    expect(teams[0].key).toBe("");
-    expect(teams[0].count).toBe(0);
-  });
-
-  it("counts each card into exactly one team", () => {
-    const teams = teamOptions([owned("Alpha"), owned("Alpha"), owned("Beta"), card()]);
-    const alpha = teams.find((team) => team.key === "Alpha")!;
-    expect(alpha.count).toBe(2);
-    expect(teams.find((team) => team.key === "Beta")!.count).toBe(1);
-    expect(teams.find((team) => team.key === "")!.count).toBe(1);
-  });
-
-  it("sorts the named teams so the switcher does not reshuffle between loads", () => {
-    const teams = teamOptions([owned("Zeta"), owned("Alpha"), owned("Beta")]);
-    expect(teams.slice(1).map((team) => team.label)).toEqual(["Alpha", "Beta", "Zeta"]);
   });
 });
 
