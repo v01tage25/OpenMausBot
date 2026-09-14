@@ -2046,5 +2046,8 @@
   "taskBoard.canvas.zoomIn": "Наблизити",
   "taskBoard.canvas.zoomOut": "Віддалити",
   "taskBoard.canvas.fit": "Показати дошку цілком",
-  "taskBoard.canvas.overlap": "Стовпчики не можуть перекриватися"
+  "taskBoard.editor.briefFormat": "Форматування: **жирний**, *курсив*, - список, # заголовок",
+  "taskBoard.editor.briefPreview": "Бот побачить це так",
+  "taskBoard.column.renameReset": "Повернути стандартну назву",
+  "taskBoard.column.renameResetHint": "Повернути «{name}»"
 }

@@ -1406,5 +1406,8 @@
   "taskBoard.canvas.zoomIn": "Ampliar",
   "taskBoard.canvas.zoomOut": "Reduzir",
   "taskBoard.canvas.fit": "Ajustar o quadro à janela",
-  "taskBoard.canvas.overlap": "As colunas não podem se sobrepor"
+  "taskBoard.editor.briefFormat": "Formatação: **negrito**, *itálico*, - lista, # título",
+  "taskBoard.editor.briefPreview": "O bot verá assim",
+  "taskBoard.column.renameReset": "Usar o nome padrão",
+  "taskBoard.column.renameResetHint": "Voltar para \"{name}\""
 }

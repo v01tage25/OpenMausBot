@@ -1400,5 +1400,8 @@
   "taskBoard.canvas.zoomIn": "Zoom avant",
   "taskBoard.canvas.zoomOut": "Zoom arrière",
   "taskBoard.canvas.fit": "Ajuster le tableau à la fenêtre",
-  "taskBoard.canvas.overlap": "Les colonnes ne peuvent pas se chevaucher"
+  "taskBoard.editor.briefFormat": "Mise en forme : **gras**, *italique*, - liste, # titre",
+  "taskBoard.editor.briefPreview": "Voici ce que verra le bot",
+  "taskBoard.column.renameReset": "Utiliser le nom par défaut",
+  "taskBoard.column.renameResetHint": "Revenir à « {name} »"
 }

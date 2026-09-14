@@ -1400,5 +1400,8 @@
   "taskBoard.canvas.zoomIn": "拡大",
   "taskBoard.canvas.zoomOut": "縮小",
   "taskBoard.canvas.fit": "ボードをウィンドウに合わせる",
-  "taskBoard.canvas.overlap": "列は重ねられません"
+  "taskBoard.editor.briefFormat": "書式: **太字**、*斜体*、- リスト、# 見出し",
+  "taskBoard.editor.briefPreview": "ボットにはこのように表示されます",
+  "taskBoard.column.renameReset": "既定の名前に戻す",
+  "taskBoard.column.renameResetHint": "「{name}」に戻す"
 }

@@ -2168,5 +2168,8 @@
   "taskBoard.canvas.zoomIn": "Zoom in",
   "taskBoard.canvas.zoomOut": "Zoom out",
   "taskBoard.canvas.fit": "Fit the board to the window",
-  "taskBoard.canvas.overlap": "Columns cannot overlap"
+  "taskBoard.editor.briefFormat": "Formatting: **bold**, *italic*, - list, # heading",
+  "taskBoard.editor.briefPreview": "The bot sees it like this",
+  "taskBoard.column.renameReset": "Use the default name",
+  "taskBoard.column.renameResetHint": "Back to \"{name}\""
 }

@@ -16,7 +16,7 @@
 // CARDS. Nothing moves a card by grabbing the column, which is what stops an
 // accidental drag from rearranging work.
 import { useEffect, useRef, useState, type DragEvent } from "react";
-import { Check, Pencil, X } from "lucide-react";
+import { Check, Pencil, RotateCcw, X } from "lucide-react";
 
 import { TaskBoardCardView } from "./TaskBoardCard";
 import { CARD_DRAG_TYPE, type TaskBoardCardProps } from "./TaskBoardCard";
@@ -32,6 +32,13 @@ import {
 export interface TaskBoardColumnProps {
   column: WorkColumn;
   title: string;
+  /** The app's own label for this column, so a custom name can be reset back
+   * to it. Passed in because the column does not know what it would be called
+   * if nobody had renamed it. */
+  fallbackTitle: string;
+  /** Whether the viewer renamed this column, which is what decides if the
+   * reset control is offered at all. */
+  renamed?: boolean;
   /** Shown in the header. Passed in rather than counted here, because the
    * header must agree with the list the page actually handed over — including
    * when a card arrives from another column mid-render. */
@@ -73,6 +80,8 @@ const HANDLES: Array<{ edge: ResizeEdge; className: string; cursor: string }> = 
 export function TaskBoardColumn({
   column,
   title,
+  fallbackTitle,
+  renamed = false,
   count,
   box,
   cards,
@@ -136,7 +145,14 @@ export function TaskBoardColumn({
     setRenaming(false);
     // An empty name is not a name: it falls back to the app's label rather
     // than leaving the column nameless.
-    onRename(column, next && next !== title ? next : null);
+    onRename(column, next && next !== fallbackTitle ? next : null);
+  };
+
+  /** Put the app's own name back. Closing the editor too, since the reason to
+   * press this is that the custom name was not wanted. */
+  const resetRename = () => {
+    setRenaming(false);
+    onRename(column, null);
   };
 
   /** Pointer gestures for moving and resizing, so both share one shape and one
@@ -201,7 +217,7 @@ export function TaskBoardColumn({
       className={cn(
         // The Team map's tile language: a panel surface, a hairline, a soft
         // shadow, and the accent only when something is happening to it.
-        "absolute flex flex-col rounded-2xl border bg-panel/90 shadow-sm transition-colors",
+        "absolute flex flex-col rounded-2xl border bg-panel/90 shadow-sm transition-colors group/column",
         over ? "border-accent/50 bg-accent/5" : "border-hairline/50",
         // A dragged column floats ABOVE the others. No ring around it: the
         // Team map draws no outline on a tile it is moving, and a focus ring
@@ -258,6 +274,20 @@ export function TaskBoardColumn({
             >
               <X size={13} />
             </button>
+            {/* Only offered when the name is actually custom: a reset button
+                that does nothing is worse than no button, and this is the one
+                place a person is already thinking about the name. */}
+            {renamed && (
+              <button
+                type="button"
+                onClick={resetRename}
+                aria-label={t("taskBoard.column.renameReset")}
+                title={t("taskBoard.column.renameResetHint", { name: fallbackTitle })}
+                className="rounded-md p-1 text-ink-secondary transition hover:bg-raised hover:text-warning"
+              >
+                <RotateCcw size={13} />
+              </button>
+            )}
           </span>
         ) : (
           <>
@@ -337,6 +367,20 @@ export function TaskBoardColumn({
           className={cn("absolute z-10", className)}
         />
       ))}
+
+      {/* The corner grip: the only visible hint that a column can be resized.
+          A bare invisible edge is discoverable by accident at best, and this
+          is the same diagonal-ridges idea as a textarea's grabber, so it reads
+          as "drag me" without a label. It fades in on hover so a resting board
+          stays calm. */}
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute bottom-1 right-1 opacity-0 transition-opacity group-hover/column:opacity-100"
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" className="text-ink-secondary/45">
+          <path d="M9 1 1 9M9 5 5 9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+        </svg>
+      </span>
     </section>
   );
 }

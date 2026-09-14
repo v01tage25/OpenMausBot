@@ -1400,5 +1400,8 @@
   "taskBoard.canvas.zoomIn": "ज़ूम इन",
   "taskBoard.canvas.zoomOut": "ज़ूम आउट",
   "taskBoard.canvas.fit": "बोर्ड को विंडो में फ़िट करें",
-  "taskBoard.canvas.overlap": "स्तंभ एक-दूसरे पर नहीं आ सकते"
+  "taskBoard.editor.briefFormat": "फ़ॉर्मैटिंग: **बोल्ड**, *इटैलिक*, - सूची, # शीर्षक",
+  "taskBoard.editor.briefPreview": "बॉट इसे ऐसे देखेगा",
+  "taskBoard.column.renameReset": "डिफ़ॉल्ट नाम इस्तेमाल करें",
+  "taskBoard.column.renameResetHint": "\"{name}\" पर वापस जाएँ"
 }

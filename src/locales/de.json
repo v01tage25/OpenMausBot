@@ -1400,5 +1400,8 @@
   "taskBoard.canvas.zoomIn": "Vergrößern",
   "taskBoard.canvas.zoomOut": "Verkleinern",
   "taskBoard.canvas.fit": "Board einpassen",
-  "taskBoard.canvas.overlap": "Spalten dürfen sich nicht überlappen"
+  "taskBoard.editor.briefFormat": "Formatierung: **fett**, *kursiv*, - Liste, # Überschrift",
+  "taskBoard.editor.briefPreview": "So sieht es der Bot",
+  "taskBoard.column.renameReset": "Standardnamen verwenden",
+  "taskBoard.column.renameResetHint": "Zurück zu \"{name}\""
 }

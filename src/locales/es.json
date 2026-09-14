@@ -1400,5 +1400,8 @@
   "taskBoard.canvas.zoomIn": "Acercar",
   "taskBoard.canvas.zoomOut": "Alejar",
   "taskBoard.canvas.fit": "Ajustar el tablero a la ventana",
-  "taskBoard.canvas.overlap": "Las columnas no pueden superponerse"
+  "taskBoard.editor.briefFormat": "Formato: **negrita**, *cursiva*, - lista, # título",
+  "taskBoard.editor.briefPreview": "El bot lo verá así",
+  "taskBoard.column.renameReset": "Usar el nombre predeterminado",
+  "taskBoard.column.renameResetHint": "Volver a \"{name}\""
 }

@@ -494,6 +494,8 @@ export function TaskBoardPage({ onBack }: { onBack?: () => void } = {}) {
                     key={status}
                     column={status}
                     title={columnTitle(status, canvas.names, columnLabel)}
+                    fallbackTitle={columnLabel(status)}
+                    renamed={Boolean(canvas.names[status])}
                     count={columns[status].length}
                     box={boxes[status]}
                     cards={columns[status]}

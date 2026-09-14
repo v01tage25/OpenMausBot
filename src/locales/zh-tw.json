@@ -1951,5 +1951,8 @@
   "taskBoard.canvas.zoomIn": "放大",
   "taskBoard.canvas.zoomOut": "縮小",
   "taskBoard.canvas.fit": "將看板符合視窗",
-  "taskBoard.canvas.overlap": "欄位不可重疊"
+  "taskBoard.editor.briefFormat": "格式：**粗體**、*斜體*、- 清單、# 標題",
+  "taskBoard.editor.briefPreview": "機器人會看到這樣的內容",
+  "taskBoard.column.renameReset": "使用預設名稱",
+  "taskBoard.column.renameResetHint": "回到「{name}」"
 }
