@@ -42,8 +42,14 @@ export interface TaskBoardColumnProps {
   onDrop: (cardId: string, beforeId: string | null) => void;
   /** Move the column. The canvas decides whether the drop is allowed, so this
    * is a request, not a commit. */
+  /** Move the column while it is held. Nothing else on the board moves. */
   onMove: (column: WorkColumn, box: ColumnBox) => void;
+  /** Put it down. The board tidies here, and only here. */
+  onCommit: (column: WorkColumn, box: ColumnBox) => void;
+  /** Grow the column while its edge is held. */
   onResize: (column: WorkColumn, box: ColumnBox) => void;
+  /** Finish a resize, which also settles the board. */
+  onResizeCommit: (column: WorkColumn, box: ColumnBox) => void;
   onRename: (column: WorkColumn, name: string | null) => void;
   /** True while this column is the one being dragged, so the canvas can lift
    * it and the column can dim itself. */
@@ -73,7 +79,9 @@ export function TaskBoardColumn({
   renderCard,
   onDrop,
   onMove,
+  onCommit,
   onResize,
+  onResizeCommit,
   onRename,
   moving = false,
 }: TaskBoardColumnProps) {
@@ -82,8 +90,8 @@ export function TaskBoardColumn({
   const [draft, setDraft] = useState(title);
   const nameRef = useRef<HTMLInputElement>(null);
   const gesture = useRef<
-    | { kind: "move"; startX: number; startY: number; box: ColumnBox; moved?: boolean }
-    | { kind: "resize"; edge: ResizeEdge; startX: number; startY: number; box: ColumnBox; moved?: boolean }
+    | { kind: "move"; startX: number; startY: number; box: ColumnBox; moved?: boolean; latest?: ColumnBox }
+    | { kind: "resize"; edge: ResizeEdge; startX: number; startY: number; box: ColumnBox; moved?: boolean; latest?: ColumnBox }
     | null
   >(null);
 
@@ -154,19 +162,30 @@ export function TaskBoardColumn({
     if (!active.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
     active.moved = true;
     if (active.kind === "move") {
-      onMove(column, { ...active.box, x: active.box.x + dx, y: active.box.y + dy });
+      // Held in the hand: free movement over the others, nothing displaced.
+      active.latest = { ...active.box, x: active.box.x + dx, y: active.box.y + dy };
+      onMove(column, active.latest);
     } else {
       // The resize maths lives in the pure lib, so a dragged edge is testable
       // without a browser.
-      onResize(column, resizeBox(active.box, active.edge, dx, dy));
+      active.latest = resizeBox(active.box, active.edge, dx, dy);
+      onResize(column, active.latest);
     }
   };
 
+  /** Let go. This is the only moment the board rearranges itself: the column
+   * lands where it was held, and the canvas seats anything it covered. */
   const endGesture = (event: React.PointerEvent) => {
-    if (!gesture.current) return;
+    const active = gesture.current;
+    if (!active) return;
     gesture.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    // A click that never travelled has nothing to commit.
+    if (active.moved && active.latest) {
+      if (active.kind === "move") onCommit(column, active.latest);
+      else onResizeCommit(column, active.latest);
     }
   };
 
@@ -184,7 +203,11 @@ export function TaskBoardColumn({
         // shadow, and the accent only when something is happening to it.
         "absolute flex flex-col rounded-2xl border bg-panel/90 shadow-sm transition-colors",
         over ? "border-accent/50 bg-accent/5" : "border-hairline/50",
-        moving && "opacity-40",
+        // A dragged column floats ABOVE the others. No ring around it: the
+        // Team map draws no outline on a tile it is moving, and a focus ring
+        // in this app means "the keyboard is here", which is a different
+        // thing from "this is in your hand".
+        moving && "z-30 shadow-xl shadow-black/40",
       )}
       aria-label={title}
       data-column={column}
@@ -239,27 +262,34 @@ export function TaskBoardColumn({
         ) : (
           <>
             {/* The title is the rename affordance: clicking it is the whole
-                gesture, and the pencil only appears on hover so the header
-                stays calm. It is a real button, so keyboard users reach it
-                too — a rename that only works on hover is a rename half the
-                people cannot find. */}
-            <button
-              type="button"
-              onDoubleClick={beginRename}
-              onClick={beginRename}
-              title={t("taskBoard.column.renameHint")}
-              aria-label={t("taskBoard.column.rename", { name: title })}
-              className="group/name flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 text-left hover:bg-raised/60"
-            >
-              <span className="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-secondary">
-                {title}
-              </span>
-              <Pencil
-                size={10}
-                className="shrink-0 text-ink-secondary/40 opacity-0 transition group-hover/name:opacity-100"
-                aria-hidden="true"
-              />
-            </button>
+                gesture, and the pencil appears on hover so the header stays
+                calm. It is a real button, so keyboard users reach it too — a
+                rename that only works on hover is a rename half the people
+                cannot find.
+
+                The button is only as wide as the name. A full-width hit area
+                painted a highlight across the whole header, which read as
+                "this column is selected" rather than "this word is a
+                control"; hovering the empty space beside the name now does
+                nothing. */}
+            <span className="flex min-w-0 flex-1 items-center">
+              <button
+                type="button"
+                onClick={beginRename}
+                title={t("taskBoard.column.renameHint")}
+                aria-label={t("taskBoard.column.rename", { name: title })}
+                className="group/name flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-left transition hover:bg-raised/70"
+              >
+                <span className="truncate text-[11px] font-semibold uppercase tracking-[0.08em] text-ink-secondary">
+                  {title}
+                </span>
+                <Pencil
+                  size={10}
+                  className="shrink-0 text-ink-secondary/40 opacity-0 transition group-hover/name:opacity-100"
+                  aria-hidden="true"
+                />
+              </button>
+            </span>
             <span className="shrink-0 text-[10.5px] tabular-nums text-ink-secondary/70">{count}</span>
           </>
         )}

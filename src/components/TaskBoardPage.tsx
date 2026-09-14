@@ -321,6 +321,12 @@ export function TaskBoardPage({ onBack }: { onBack?: () => void } = {}) {
    * Only the order (and, when it crossed columns, the status) is written. The
    * card is never started by this: dragging is arrangement, not execution. */
   const handleDrop = useCallback(async (status: WorkColumn, cardId: string, beforeId: string | null) => {
+    // Clear the drag mark here as well as on the drop source's own `dragend`.
+    // A card that lands in a DIFFERENT column is unmounted from where the
+    // drag started, so that node's `dragend` never fires and the card stayed
+    // dimmed until something else re-rendered it. This is the one place every
+    // completed drop passes through, whatever the browser did with the source.
+    setDraggingId(null);
     const column = columns[status];
     const moved = column.find((card) => card.id === cardId) ?? cards.find((card) => card.id === cardId);
     if (!moved) return;
@@ -357,6 +363,22 @@ export function TaskBoardPage({ onBack }: { onBack?: () => void } = {}) {
   }, [cards, columns, fail, refresh]);
 
   const dragEnd = useCallback(() => setDraggingId(null), []);
+
+  /** A drag abandoned outside the board — dropped on the sidebar, or cancelled
+   * with Escape — fires no drop and, on some browsers, no `dragend` on the
+   * source either. Without this the card stayed dimmed with nothing to clear
+   * it. `pointerup` on the window covers every way a drag can end without a
+   * drop landing. */
+  useEffect(() => {
+    if (draggingId === null) return;
+    const clear = () => setDraggingId(null);
+    window.addEventListener("pointerup", clear);
+    window.addEventListener("dragend", clear);
+    return () => {
+      window.removeEventListener("pointerup", clear);
+      window.removeEventListener("dragend", clear);
+    };
+  }, [draggingId]);
 
   return (
     <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-app text-ink">
@@ -477,7 +499,9 @@ export function TaskBoardPage({ onBack }: { onBack?: () => void } = {}) {
                     cards={columns[status]}
                     moving={canvas.moving === status}
                     onMove={canvas.move}
+                    onCommit={canvas.commit}
                     onResize={canvas.resize}
+                    onResizeCommit={canvas.commitResize}
                     onRename={canvas.rename}
                     onDrop={(cardId, beforeId) => void handleDrop(status, cardId, beforeId)}
                     renderCard={(card) => ({

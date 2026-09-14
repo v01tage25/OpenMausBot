@@ -22,10 +22,13 @@ import {
   columnTitle,
   contentBounds,
   defaultBoxes,
+  keepOnScreen,
   parseLayout,
   resizeBox,
   resolveBoxes,
+  settleInto,
   validBox,
+  type ColumnBox,
 } from "./board-layout";
 import { WORK_COLUMNS, type WorkColumn } from "./task-board";
 
@@ -100,6 +103,83 @@ describe("collisions", () => {
     const boxes = defaultBoxes();
     const moved = { ...boxes.blocked, y: boxes.blocked.y + DEFAULT_COLUMN_HEIGHT + COLUMN_GAP };
     expect(collisions("blocked", moved, boxes)).toEqual([]);
+  });
+});
+
+describe("settleInto", () => {
+  const noOverlaps = (boxes: Record<WorkColumn, ColumnBox>) => {
+    for (const a of WORK_COLUMNS) {
+      for (const b of WORK_COLUMNS) {
+        if (a === b) continue;
+        if (boxesOverlap(boxes[a], boxes[b])) return false;
+      }
+    }
+    return true;
+  };
+
+  it("puts the moved column exactly where it was dropped", () => {
+    // The gesture must be honest: the column lands where the person aimed,
+    // not near it.
+    const boxes = defaultBoxes();
+    const dropped = { ...boxes.backlog, x: 0, y: 900 };
+    const settled = settleInto("backlog", dropped, boxes);
+    expect(settled.backlog).toEqual(dropped);
+  });
+
+  it("slides whatever it landed on out of the way", () => {
+    const boxes = defaultBoxes();
+    // Drop Backlog right on top of To do.
+    const dropped = { ...boxes.backlog, x: boxes.todo.x + 20 };
+    const settled = settleInto("backlog", dropped, boxes);
+    expect(settled.backlog).toEqual(dropped);
+    expect(boxesOverlap(settled.backlog, settled.todo)).toBe(false);
+  });
+
+  it("leaves no overlapping pair at all, whatever was hit", () => {
+    const boxes = defaultBoxes();
+    const settled = settleInto("done", { ...boxes.done, x: 0, y: 0 }, boxes);
+    expect(noOverlaps(settled)).toBe(true);
+  });
+
+  it("does not disturb columns the drop never touched", () => {
+    const boxes = defaultBoxes();
+    const settled = settleInto("blocked", { ...boxes.blocked, x: boxes.blocked.x + 900, y: 0 }, boxes);
+    // Far to the right, into empty space: nothing else should have moved.
+    expect(settled.backlog).toEqual(boxes.backlog);
+    expect(settled.todo).toEqual(boxes.todo);
+    expect(settled.done).toEqual(boxes.done);
+  });
+
+  it("pushes a neighbour the way the drag was going, not backwards", () => {
+    // The board tidies by re-seating a collided column at the nearest FREE
+    // seat, so it lands beside the dropped one rather than being flung across
+    // the board — the failure that made a leftwards drag look like the
+    // neighbour teleported right.
+    const boxes = defaultBoxes();
+    const dropped = { ...boxes.done, x: boxes.cancelled.x + 10 };
+    const settled = settleInto("done", dropped, boxes);
+    expect(boxesOverlap(settled.done, settled.cancelled)).toBe(false);
+    // It moved, but stayed within a column's reach of where it was.
+    expect(Math.abs(settled.cancelled.x - boxes.cancelled.x)).toBeLessThanOrEqual(
+      boxes.done.width + 40,
+    );
+  });
+
+  it("keeps every column a real box after a pile-up", () => {
+    // Four columns dropped in the same place in turn. Each lands where it was
+    // put — no refusal — and the ones it covered are re-seated rather than
+    // lost, so the board never holds two columns in the same spot.
+    let boxes = defaultBoxes();
+    for (const column of ["backlog", "todo", "in_progress", "blocked"] as WorkColumn[]) {
+      boxes = settleInto(column, { ...boxes[column], x: 0, y: 0 }, boxes);
+    }
+    expect(noOverlaps(boxes)).toBe(true);
+    expect(boxes.blocked.x).toBe(0);
+    expect(boxes.blocked.y).toBe(0);
+    for (const column of WORK_COLUMNS) {
+      expect(Number.isFinite(boxes[column].x)).toBe(true);
+      expect(Number.isFinite(boxes[column].y)).toBe(true);
+    }
   });
 });
 
@@ -249,6 +329,49 @@ describe("columnTitle", () => {
 
   it("ignores a rename that is only whitespace", () => {
     expect(columnTitle("blocked", { blocked: "   " }, label)).toBe("BLOCKED");
+  });
+});
+
+describe("keepOnScreen", () => {
+  const viewport = { width: 1000, height: 800 };
+  const view = { x: 0, y: 0, scale: 1 };
+
+  it("leaves a column alone when it is already visible", () => {
+    const box = { x: 100, y: 100, width: 300, height: 400 };
+    expect(keepOnScreen(box, viewport, view)).toEqual(box);
+  });
+
+  it("pulls a column back from beyond the left edge", () => {
+    // The failure this prevents: a column dragged past the edge is still on
+    // the board but nowhere a person can see or grab it.
+    const box = { x: -5000, y: 100, width: 300, height: 400 };
+    const kept = keepOnScreen(box, viewport, view);
+    expect(kept.x).toBeGreaterThan(box.x);
+    expect(kept.x * view.scale + view.x + box.width * view.scale).toBeGreaterThanOrEqual(80);
+  });
+
+  it("pulls a column back from beyond the right edge", () => {
+    const box = { x: 5000, y: 100, width: 300, height: 400 };
+    const kept = keepOnScreen(box, viewport, view);
+    expect(kept.x).toBeLessThan(box.x);
+    expect(kept.x * view.scale + view.x).toBeLessThanOrEqual(viewport.width - 80);
+  });
+
+  it("pulls a column back from above and below", () => {
+    const above = keepOnScreen({ x: 0, y: -5000, width: 300, height: 400 }, viewport, view);
+    expect(above.y).toBeGreaterThan(-5000);
+    const below = keepOnScreen({ x: 0, y: 5000, width: 300, height: 400 }, viewport, view);
+    expect(below.y).toBeLessThan(5000);
+  });
+
+  it("accounts for pan and zoom", () => {
+    // The clamp is about screen pixels; the same world position can be off
+    // screen or on it depending on the view.
+    const box = { x: 0, y: 0, width: 300, height: 400 };
+    const panned = { x: -2000, y: -2000, scale: 1 };
+    const kept = keepOnScreen(box, viewport, panned);
+    expect(kept.x).toBeGreaterThan(box.x);
+    expect(kept.y).toBeGreaterThan(box.y);
   });
 });
 

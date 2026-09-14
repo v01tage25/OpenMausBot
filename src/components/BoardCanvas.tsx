@@ -3,12 +3,10 @@
 //
 // Two rules shape this file.
 //
-// First, a drop that would land a column on top of another is REFUSED, and the
-// column springs back. The Team map lets its tiles overlap, which is exactly
-// the mess this is meant to avoid: a board is read at a glance, and a column
-// half-hidden under another is a column whose work nobody sees. Refusing is
-// also honest — pushing the other column aside would mean dragging one thing
-// and silently moving a second.
+// First, a column always lands where it was put. Whatever it lands on slides
+// out of the way, so no two columns ever overlap and the gesture is never
+// refused. Refusing would be safe but it fights the person — they aimed
+// somewhere and the board said no without offering an alternative.
 //
 // Second, nothing here is the board's data. Positions, sizes and names are the
 // viewer's own arrangement of their screen, so they live in this browser under
@@ -23,11 +21,12 @@ import {
   MAX_ZOOM,
   MIN_ZOOM,
   clamp,
-  collisions,
   contentBounds,
   defaultBoxes,
+  keepOnScreen,
   parseLayout,
   resolveBoxes,
+  settleInto,
   type BoardLayout,
   type ColumnBox,
 } from "@/lib/board-layout";
@@ -37,9 +36,14 @@ export interface BoardCanvasProps {
 }
 
 export interface BoardCanvasApi {
-  /** Request a move. Refused when the destination would overlap. */
+  /** Move a column while it is held. Free: nothing else moves. */
   move: (column: WorkColumn, box: ColumnBox) => void;
+  /** Put it down. The board tidies here, and only here. */
+  commit: (column: WorkColumn, box: ColumnBox) => void;
+  /** Grow a column while its edge is held. Free, like a move. */
   resize: (column: WorkColumn, box: ColumnBox) => void;
+  /** Finish a resize, which settles the board. */
+  commitResize: (column: WorkColumn, box: ColumnBox) => void;
   rename: (column: WorkColumn, name: string | null) => void;
   names: Partial<Record<WorkColumn, string>>;
   /** The column currently being dragged, so it can be drawn as in-flight. */
@@ -52,7 +56,6 @@ export function BoardCanvas({ children }: BoardCanvasProps) {
   const [names, setNames] = useState<Partial<Record<WorkColumn, string>>>({});
   const [view, setView] = useState({ x: 0, y: 0, scale: 1 });
   const [moving, setMoving] = useState<WorkColumn | null>(null);
-  const [refused, setRefused] = useState<WorkColumn | null>(null);
   const storageKey = useRef<string | null>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const pan = useRef<{ startX: number; startY: number; view: { x: number; y: number } } | null>(null);
@@ -99,40 +102,50 @@ export function BoardCanvas({ children }: BoardCanvasProps) {
     [names, save, view],
   );
 
-  /** A move is a REQUEST. It lands only if the destination is clear, so the
-   * board cannot be arranged into a pile. */
-  const move = useCallback(
+  /** While a column is being dragged it moves FREELY over the others.
+   *
+   * No neighbour is displaced here, and nothing is written to storage. A drag
+   * is a person holding a column in their hand: the board rearranging itself
+   * underneath the pointer is what made this feel like the other columns were
+   * running away. The tidying happens once, on `commit`, after the drop. */
+  const move = useCallback((column: WorkColumn, box: ColumnBox) => {
+    setMoving(column);
+    setBoxes((current) => ({ ...current, [column]: box }));
+  }, []);
+
+  /** The drop. This is where the board tidies: the column stays exactly where
+   * it was put and anything it landed on is re-seated, then the result is
+   * persisted. */
+  const commit = useCallback(
     (column: WorkColumn, box: ColumnBox) => {
+      setMoving(null);
       setBoxes((current) => {
-        const hit = collisions(column, box, current);
-        if (hit.length) {
-          setRefused(column);
-          // Nothing changes: the column stays where it was and the canvas
-          // shows why. Moving it and moving it back would look like a glitch.
-          return current;
-        }
-        setRefused(null);
-        setMoving(column);
-        const next = { ...current, [column]: box };
+        const viewport = viewportRef.current;
+        const kept = viewport
+          ? keepOnScreen(box, { width: viewport.clientWidth, height: viewport.clientHeight }, view)
+          : box;
+        const next = settleInto(column, kept, current);
         persist(next);
         return next;
       });
     },
-    [persist],
+    [persist, view],
   );
 
-  const resize = useCallback(
+  /** Growing a column is free while the edge is held, for the same reason a
+   * move is: the board rearranging itself under the pointer is the thing that
+   * made dragging feel unpredictable. */
+  const resize = useCallback((column: WorkColumn, box: ColumnBox) => {
+    setBoxes((current) => ({ ...current, [column]: box }));
+  }, []);
+
+  /** Letting go of a resize settles the board, exactly as letting go of a
+   * column does — a column grown into its neighbour pushes it aside once,
+   * rather than continuously while the edge is dragged. */
+  const commitResize = useCallback(
     (column: WorkColumn, box: ColumnBox) => {
       setBoxes((current) => {
-        // A resize can also collide — grown into a neighbour — so it obeys the
-        // same rule as a move rather than being trusted because it is smaller
-        // in appearance.
-        if (collisions(column, box, current).length) {
-          setRefused(column);
-          return current;
-        }
-        setRefused(null);
-        const next = { ...current, [column]: box };
+        const next = settleInto(column, box, current);
         persist(next);
         return next;
       });
@@ -152,14 +165,6 @@ export function BoardCanvas({ children }: BoardCanvasProps) {
     },
     [boxes, persist],
   );
-
-  /** Clear the "refused" flag once the column stops being dragged, so the
-   * warning is about the gesture and not a permanent mark. */
-  useEffect(() => {
-    if (!refused) return;
-    const timer = window.setTimeout(() => setRefused(null), 1_600);
-    return () => window.clearTimeout(timer);
-  }, [refused]);
 
   const fit = useCallback(() => {
     const viewport = viewportRef.current;
@@ -267,7 +272,7 @@ export function BoardCanvas({ children }: BoardCanvasProps) {
           className="absolute left-0 top-0 origin-top-left"
           style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})` }}
         >
-          {children(boxes, { move, resize, rename, names, moving })}
+          {children(boxes, { move, commit, resize, commitResize, rename, names, moving })}
         </div>
       </div>
 
@@ -302,15 +307,6 @@ export function BoardCanvas({ children }: BoardCanvasProps) {
           <Plus size={14} />
         </button>
       </div>
-
-      {refused && (
-        <p
-          role="status"
-          className="animate-pop-in pointer-events-none absolute bottom-4 left-1/2 z-20 -translate-x-1/2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-1.5 text-[12px] text-warning shadow-sm"
-        >
-          {t("taskBoard.canvas.overlap", { name: refused })}
-        </p>
-      )}
     </div>
   );
 }

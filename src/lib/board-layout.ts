@@ -84,10 +84,9 @@ export function boxesOverlap(a: ColumnBox, b: ColumnBox): boolean {
 
 /** The columns a moved box would land on, if any.
  *
- * The canvas refuses these drops rather than nudging the other column aside:
- * a board where dragging one column silently moves another is a board that
- * fights the person arranging it, and the Team map's free-for-all is exactly
- * the behaviour this is meant to avoid. */
+ * Used by `settleInto` to decide which columns must slide out of the way. The
+ * rule the board enforces is "no two columns overlap"; how it gets there is
+ * displacement, not refusal, so this is a detector rather than a veto. */
 export function collisions(
   moved: WorkColumn,
   box: ColumnBox,
@@ -227,6 +226,40 @@ export function resizeBox(
   return { x, y, width, height };
 }
 
+/** Keep a column on screen.
+ *
+ * The canvas is unbounded, so without this a column can be dragged past the
+ * edge and effectively lost: still on the board, but nowhere a person can see
+ * or reach it. A small overhang is allowed so a column can sit flush against
+ * the edge while being dragged, but the box may never leave the viewport
+ * entirely. */
+export function keepOnScreen(
+  box: ColumnBox,
+  viewport: { width: number; height: number },
+  view: { x: number; y: number; scale: number },
+): ColumnBox {
+  // World coordinates → screen pixels, so the clamp is about what the person
+  // can actually see rather than about world space.
+  const screenLeft = box.x * view.scale + view.x;
+  const screenTop = box.y * view.scale + view.y;
+  const screenWidth = box.width * view.scale;
+  const screenHeight = box.height * view.scale;
+
+  // A column must keep at least this much of itself visible on every edge it
+  // can be pushed against — enough to grab its header and drag it back.
+  const keep = 80;
+
+  let dx = 0;
+  let dy = 0;
+  if (screenLeft + screenWidth < keep) dx = keep - (screenLeft + screenWidth);
+  if (screenLeft > viewport.width - keep) dx = viewport.width - keep - screenLeft;
+  if (screenTop + screenHeight < keep) dy = keep - (screenTop + screenHeight);
+  if (screenTop > viewport.height - keep) dy = viewport.height - keep - screenTop;
+
+  if (dx === 0 && dy === 0) return box;
+  return { ...box, x: box.x + dx / view.scale, y: box.y + dy / view.scale };
+}
+
 /** The bounding box of every column, for fitting the view. */
 export function contentBounds(boxes: Record<WorkColumn, ColumnBox>) {
   const values = WORK_COLUMNS.map((column) => boxes[column]);
@@ -235,4 +268,90 @@ export function contentBounds(boxes: Record<WorkColumn, ColumnBox>) {
   const right = Math.max(...values.map((box) => box.x + box.width));
   const bottom = Math.max(...values.map((box) => box.y + box.height));
   return { left, top, right, bottom, width: right - left, height: bottom - top };
+}
+
+/** How much clear space is left around a column when the board tidies. */
+const TIDY_GAP = 24;
+
+/** Whether a box would overlap anything already placed. */
+function stillOverlaps(box: ColumnBox, all: ColumnBox[]): boolean {
+  return all.some((other) => boxesOverlap(box, other));
+}
+
+/** Resolve the board so nothing overlaps, with `front` keeping the spot it was
+ * dropped on.
+ *
+ * The simpler rule, after two tries at the clever one. Neighbours are NOT
+ * pushed around while a column is being dragged: the dragged column simply
+ * floats above them (the canvas lifts it), and the tidying happens once, on
+ * drop. Chasing a column around the canvas as it passes over others made the
+ * board feel like it was fighting the person — and any "which way should this
+ * one move" rule is a guess, because the board cannot know what they meant.
+ *
+ * So: the dropped column stays exactly where it was put, and every other
+ * column that it landed on is re-seated at the nearest free spot on a grid
+ * flowing from the dropped column outward. Only columns that actually collide
+ * move, so dropping into clear space disturbs nothing. */
+export function settleInto(
+  moved: WorkColumn,
+  box: ColumnBox,
+  boxes: Record<WorkColumn, ColumnBox>,
+): Record<WorkColumn, ColumnBox> {
+  const next: Record<WorkColumn, ColumnBox> = { ...boxes, [moved]: box };
+  const placed: ColumnBox[] = [box];
+
+  // A column that the drop did not touch keeps its place, whatever the order.
+  const collided = WORK_COLUMNS.filter(
+    (column) => column !== moved && boxesOverlap(box, boxes[column]),
+  );
+  for (const column of WORK_COLUMNS) {
+    if (column === moved || collided.includes(column)) continue;
+    placed.push(boxes[column]);
+  }
+
+  for (const column of collided) {
+    const own = boxes[column];
+    // Search outward in rings for the nearest free seat, so a displaced column
+    // lands beside the dropped one rather than being flung to the far side of
+    // the board.
+    const seat = nearestFreeSeat(own, box, placed);
+    next[column] = seat;
+    placed.push(seat);
+  }
+
+  return next;
+}
+
+/** The closest position to `own` that does not overlap anything in `placed`,
+ * searched in rings around the column that displaced it. */
+function nearestFreeSeat(own: ColumnBox, front: ColumnBox, placed: ColumnBox[]): ColumnBox {
+  const stepX = front.width + TIDY_GAP;
+  const stepY = front.height + TIDY_GAP;
+  if (!stillOverlaps(own, placed)) return own;
+
+  for (let ring = 1; ring <= 6; ring += 1) {
+    // Candidate seats around the dropped column, nearest ring first, ordered
+    // by distance so the closest free one wins.
+    const offsets: Array<[number, number]> = [];
+    for (let dx = -ring; dx <= ring; dx += 1) {
+      for (let dy = -ring; dy <= ring; dy += 1) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
+        offsets.push([dx, dy]);
+      }
+    }
+    offsets.sort((a, b) => Math.hypot(a[0], a[1]) - Math.hypot(b[0], b[1]));
+
+    const seats = offsets.map(([dx, dy]) => ({
+      ...own,
+      x: front.x + dx * stepX,
+      y: front.y + dy * stepY,
+    }));
+    const free = seats.find((seat) => !stillOverlaps(seat, placed));
+    if (free) return free;
+  }
+
+  // Nowhere free within reach: the column stays where it was. The board is
+  // crowded, and moving it further would be a bigger surprise than the
+  // overlap it already had.
+  return own;
 }
