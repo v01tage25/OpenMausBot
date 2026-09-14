@@ -349,6 +349,14 @@ export class WorkItems {
         next.threadId = undefined;
         next.startedAt = undefined;
         next.finishedAt = undefined;
+        // The failure belonged to the bot that is being taken off this card.
+        // Keeping it made a freshly assigned card read "Needs attention" for
+        // a bot that had never run it, and the alert face followed the card
+        // rather than the thing that actually failed.
+        next.lastError = undefined;
+        // Off the blocked column too, unless a person put it in a terminal
+        // one: a card that was blocked BY its old bot is no longer blocked.
+        if (item.status === "blocked") next.status = "todo";
       }
     }
     if (patch.artifacts !== undefined) next.artifacts = cleanArtifacts(patch.artifacts);

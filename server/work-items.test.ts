@@ -211,6 +211,29 @@ describe("WorkItems", () => {
     expect(settled.lastError).toBeUndefined();
   });
 
+  it("clears the old bot's failure when the card is given to another bot", () => {
+    // The failure belonged to the bot being taken off the card. Keeping it
+    // made a freshly assigned card read "Needs attention" — and wear the
+    // alert face — for a bot that had never run it.
+    const items = board().open();
+    const card = items.create({ title: "hand it over", ownerBotId: "bot-1", status: "in_progress" });
+    items.attachThread(card.id, "thread-1");
+    items.settle(card.id, { ok: false, reason: "the provider refused the turn" });
+
+    const moved = items.update(card.id, { ownerBotId: "bot-2" });
+    expect(moved.ownerBotId).toBe("bot-2");
+    expect(moved.lastError).toBeUndefined();
+    // And off the blocked column, because it was blocked by the old bot.
+    expect(moved.status).toBe("todo");
+  });
+
+  it("does not move a card a person already finished just because it changed hands", () => {
+    const items = board().open();
+    const card = items.create({ title: "done and handed over", ownerBotId: "bot-1", status: "done" });
+    const moved = items.update(card.id, { ownerBotId: "bot-2" });
+    expect(moved.status).toBe("done");
+  });
+
   it("does nothing for a card that is not running", () => {
     const items = board().open();
     const card = items.create({ title: "still waiting", status: "todo" });
